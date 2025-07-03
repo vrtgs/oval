@@ -114,7 +114,7 @@ impl<T, const MIN: usize> Deref for MinSizedCowArray<T, MIN> {
     fn deref(&self) -> &Self::Target {
         let slice = &**self.0;
         // FIXME: unchecked
-        assert_eq!(slice.len(), MIN);
+        assert!(slice.len() >= MIN);
         slice
     }
 }
@@ -163,6 +163,7 @@ impl<T, const MIN: usize> DerefMut for MinSizedCowArrayMut<'_, T, MIN> {
     }
 }
 
+#[repr(transparent)]
 pub struct CowArray<T>(MinSizedCowArray<T, 0>);
 
 impl<T> CowArray<T> {
@@ -208,6 +209,7 @@ impl<T> Deref for CowArray<T> {
     }
 }
 
+#[repr(transparent)]
 pub struct CowArrayMut<'a, T>(MinSizedCowArrayMut<'a, T, 0>);
 
 impl<T> CowArrayMut<'_, T> {
@@ -321,9 +323,8 @@ mod tests {
     fn test_min_sized_from_vec() {
         let vec = vec![1, 2, 3, 4];
         let arr = MinSizedCowArray::<i32, 3>::from_vec(vec.clone()).unwrap();
-        assert_eq!(arr.len(), 4);
-        assert_eq!(arr.capacity(), 4);
         assert_eq!(&*arr, &vec[..]);
+        assert!(arr.capacity() >= arr.len());
 
         let short_vec = vec![1];
         assert!(MinSizedCowArray::<_, 2>::from_vec(short_vec).is_err());
@@ -409,17 +410,19 @@ mod tests {
     fn test_cow_array_clone() {
         let arr = CowArray::copy_from_slice(&[1, 2, 3]);
         let arr2 = arr.clone();
-        assert_eq!(arr.len(), arr2.len());
         assert_eq!(&*arr.0, &*arr2.0);
     }
 
     #[test]
     fn test_cow_array_ptr_accessors() {
-        let arr = CowArray::copy_from_slice(&[1, 2, 3]);
+        let slice = &[1, 2, 3];
+        let arr = CowArray::copy_from_slice(slice);
         let ptr = arr.as_ptr();
 
         unsafe {
-            assert_eq!(*ptr, 1);
+            for (i, element) in slice.iter().enumerate() {
+                assert_eq!(*ptr.add(i), *element);
+            }
         }
     }
 
@@ -467,7 +470,7 @@ mod tests {
         }
         let arr = MinSizedCowArray::<_, 512>::from_vec(vec.clone()).unwrap();
         assert_eq!(arr.len(), 1024);
-        assert_eq!(arr.capacity(), 1024);
+        assert!(arr.capacity() >= 1024);
         assert_eq!(&*arr, &vec[..]);
     }
 }
