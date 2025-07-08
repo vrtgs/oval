@@ -27,12 +27,22 @@ impl<T, const MIN: usize> MinSizedCowArray<T, MIN> {
         self.0.first_chunk().unwrap()
     }
 
-    pub fn tail(&self) -> &[T] {
+
+    pub fn split_head(&self) -> (&[T; MIN], &[T]) {
         // FIXME: unchecked
-        let (_, tail): (&[T; MIN], &[T]) = self.0.split_first_chunk::<MIN>().unwrap();
-        tail
+        self.0.split_first_chunk().unwrap()
     }
-    
+
+    pub fn tail(&self) -> &[T; MIN] {
+        // FIXME: unchecked
+        self.0.last_chunk().unwrap()
+    }
+
+    pub fn split_tail(&self) -> (&[T], &[T; MIN]) {
+        // FIXME: unchecked
+        self.0.split_last_chunk().unwrap()
+    }
+
     pub fn from_vec(vec: Vec<T>) -> Result<Self, Vec<T>> {
         if vec.len() < MIN {
             return Err(vec)
@@ -204,8 +214,8 @@ impl<T: Clone> CowArray<T> {
 impl<T> Deref for CowArray<T> {
     type Target = [T];
 
-    fn deref(&self) -> &Self::Target { 
-        &self.0 
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -240,16 +250,22 @@ impl<'a, T> DerefMut for CowArrayMut<'a, T> {
     }
 }
 
+impl<T> FromIterator<T> for CowArray<T> {
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
+        CowArray::from_vec(Vec::from_iter(iter))
+    }
+}
+
 macro_rules! same_impl {
     (
-        $(impl<$T: ident $(: $bound: path)?> ($trait: path) for Cows {
+        $(impl<$T: ident $(: $bound: path)?> ($trait: path) for $(&$life: lifetime)?Cows {
             $($tt:item)*
         })+
     ) => {
-        $(impl<$T $(: $bound)?, const MIN: usize> $trait for MinSizedCowArray<$T, MIN> {
+        $(impl<$($life,)? $T $(: $bound)?, const MIN: usize> $trait for $(& $life)?MinSizedCowArray<$T, MIN> {
             $($tt)*
         }
-        impl<$T $(: $bound)?> $trait for CowArray<$T> {
+        impl<$($life,)? $T $(: $bound)?> $trait for $(& $life)? CowArray<$T> {
             $($tt)*
         })+
     };
@@ -297,6 +313,15 @@ same_impl! {
     impl<T: Ord> (Ord) for Cows {
         fn cmp(&self, other: &Self) -> Ordering {
             <[T] as Ord>::cmp(self, other)
+        }
+    }
+
+    impl<T> (IntoIterator) for &'a Cows {
+        type Item = &'a T;
+        type IntoIter = core::slice::Iter<'a, T>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            (**self).iter()
         }
     }
 }
@@ -443,6 +468,7 @@ mod tests {
         {
             let arr = MinSizedCowArray::new([DropCounter, DropCounter]);
             let _arr2 = arr.clone();
+            let _arr3 = arr.clone();
         }
 
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 2);

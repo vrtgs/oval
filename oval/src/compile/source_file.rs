@@ -1,17 +1,25 @@
 use alloc::string::String;
+use core::fmt::{Debug, Formatter};
 use crate::compile::tokenizer::TokenizedSource;
-use crate::path::Path;
+use crate::symbol::Path;
 
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct SourceId(pub(crate) usize);
 
-// FIXME: change Debug
-#[derive(Debug)]
 pub struct SourceFile {
     id: SourceId,
-    module: Path, 
+    module: Path,
     contents: String,
+}
+
+impl Debug for SourceFile {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SourceFile")
+            .field("id", &self.id)
+            .field("module", &self.module)
+            .finish_non_exhaustive()
+    }
 }
 
 impl SourceFile {

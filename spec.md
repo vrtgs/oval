@@ -53,7 +53,7 @@ functions are just fancy constants that resolve to an expression of type `functi
 
 functions are declared as follows:
 ```
-fun $name:ident(
+fn $name:ident(
   $($($arg:ident : $arg_ty: type),+ $(,)?)?
 ) $(-> $ret: type)?
   $block_expr

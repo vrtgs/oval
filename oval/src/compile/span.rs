@@ -17,6 +17,8 @@ impl Debug for SimpleSpan {
 
 
 impl SimpleSpan {
+    pub const EMPTY: Self = SimpleSpan::from_range(0..0);
+    
     pub const fn from_range(range: Range<usize>) -> Self {
         Self {
             start: range.start,
