@@ -1,7 +1,12 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use crate::compile::parser::{Tuple, ParseAst, Parser, TupleOrParens};
-use crate::compile::tokenizer::{TokenKind, TokenTreeKind};
+use chumsky::input::ValueInput;
+use chumsky::{IterParser, Parser};
+use chumsky::prelude::{just, SimpleSpan};
+use chumsky::primitive::choice;
+use chumsky::recursive::recursive;
+use crate::compile::parser::{OvalParserExt, ParseAst, ParserExtra};
+use crate::compile::tokenizer::Token;
 use crate::symbol::Path;
 
 
@@ -9,36 +14,43 @@ use crate::symbol::Path;
 #[derive(Debug)]
 pub enum Type {
     Tuple(Vec<Type>),
-    Array(Box<Type>),
     Parens(Box<Type>),
+    Array(Box<Type>),
     Path(Path),
     Infer,
 }
 
 impl ParseAst for Type {
-    fn parse_inner<'src>(parser: &mut Parser<'src, '_, '_>) -> crate::compile::error::Result<'src, Self> {
-        if let Ok(path) = parser.parse::<Path>() {
-            return Ok(Type::Path(path))
-        }
-
-        parser.eat_with(|tt, parser| {
-            Ok(Some(match tt.kind() {
-                TokenTreeKind::Wildcard => Type::Infer,
-                TokenTreeKind::Paren(tt) => {
-                    let mut parens = parser.sub_parser(tt);
-                    let res = parens.parse_list::<Type, Tuple>(TokenKind::Comma)?;
-                    match res {
-                        TupleOrParens::Parens(t) => Type::Parens(Box::new(t)),
-                        TupleOrParens::Tuple(ts) => Type::Tuple(ts),
+    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        recursive(|type_parser| {
+            let tuple_parser = type_parser
+                .clone()
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<Type>>()
+                .then(just(Token::Comma).or_not().map(|tok| tok.is_some()))
+                .in_parens()
+                // TODO: tuple parsing with less code duplication
+                .map(|(mut types, leading)| {
+                    if !leading {
+                        match <[_; 1]>::try_from(types) {
+                            Ok([x]) => return Type::Parens(Box::new(x)),
+                            Err(fail) => types = fail
+                        }
                     }
-                },
-                TokenTreeKind::Bracket(tt) => {
-                    let ty = parser.sub_parser(tt).parse::<Self>()?;
-                    parser.assert_eos()?;
-                    Self::Parens(Box::new(ty))
-                }
-                _ => return Ok(None)
-            }))
+
+                    Type::Tuple(types)
+                });
+
+            let array_parser = type_parser
+                .in_square_brackets()
+                .map(|ty| Type::Array(Box::new(ty)));
+
+            choice((
+                just(Token::Wildcard).map(|_| Type::Infer),
+                Path::parser().map(Type::Path),
+                tuple_parser,
+                array_parser
+            ))
         })
     }
 }

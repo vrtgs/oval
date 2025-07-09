@@ -2,35 +2,26 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::borrow::ToOwned;
 use core::fmt::{Debug, Display};
+use core::ops::Range;
 use ariadne::{Cache, Label, Report, ReportKind, Source};
+use chumsky::error::Rich;
+use chumsky::span::SimpleSpan;
 use hashbrown::hash_map::Entry;
 use hashbrown::HashMap;
 use thin_vec::{thin_vec, ThinVec};
 use crate::compile::source_file::{SourceFile, SourceId};
-use crate::compile::span::{FullSpan, SimpleSpan};
-pub use syntax::SyntaxError;
 use crate::compile::compiler::Compiler;
 use crate::compile::source_map::SourceMap;
-
-pub mod syntax;
+use crate::compile::tokenizer::Token;
 
 pub(crate) enum ErrorKind<'a> {
-    Syntax { 
+    Syntax {
         source: &'a SourceFile,
-        errors: Vec<SyntaxError>
+        errors: Vec<Rich<'static, Token, SimpleSpan>>
     },
 }
 
 pub struct Error<'a>(ThinVec<ErrorKind<'a>>);
-
-impl<'a> Error<'a> {
-    pub fn syntax_error(file: &'a SourceFile, errors: impl IntoIterator<Item=SyntaxError>) -> Self {
-        Self::from(ErrorKind::Syntax {
-            source: file,
-            errors: errors.into_iter().collect(),
-        })
-    }
-}
 
 impl<'a, E: Into<ErrorKind<'a>>> From<E> for Error<'a> {
     fn from(value: E) -> Self {
@@ -38,29 +29,31 @@ impl<'a, E: Into<ErrorKind<'a>>> From<E> for Error<'a> {
     }
 }
 
+pub type FullSpan = (SourceId, Range<usize>);
+
 impl<'a> Error<'a> {
+    pub fn syntax_error<'err>(file: &'a SourceFile, errors: impl IntoIterator<Item=Rich<'err, Token, SimpleSpan>>) -> Self {
+        Self::from(ErrorKind::Syntax {
+            source: file,
+            errors: errors.into_iter().map(|err| err.into_owned()).collect(),
+        })
+    }
+
     /// returns an iterator over required ids and report
     pub fn error_reports(&self) -> impl Iterator<Item=Report<'_, FullSpan>> {
         let errors = self.0.iter().flat_map(|error| {
             match error {
                 ErrorKind::Syntax { source: file, errors} => {
                     let errors_iter = errors.iter().map(|error| {
-                        let report_span = error.span().unwrap_or(SimpleSpan::EMPTY).into_full(file);
+                        let span = (*file.id(), error.span().into_range());
 
-                        let report = Report::build(ReportKind::Error, report_span)
-                            .with_code(1);
-
-                        let report = match error.span() {
-                            None => report.with_message(&error),
-                            Some(span) => {
-                                let span = span.into_full(file);
-                                report
-                                    .with_message("parse failure")
-                                    .with_label({
-                                        Label::new(span).with_message(&error)
-                                    })
-                            }
-                        };
+                        let report = Report::build(ReportKind::Error, span.clone())
+                            .with_code(1)
+                            .with_message("parse failure")
+                            .with_label({
+                                Label::new(span)
+                                    .with_message(error.reason())
+                            });
 
                         report.finish()
                     });
@@ -72,13 +65,8 @@ impl<'a> Error<'a> {
 
         errors
     }
-    
-    pub fn merge(self, other: Self) -> Self {
-        let mut errors = self.0;
-        errors.extend(other.0);
-        Self(errors)
-    }
 }
+
 
 pub type Result<'a, T, E = Error<'a>> = core::result::Result<T, E>;
 

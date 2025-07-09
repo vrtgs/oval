@@ -1,13 +1,15 @@
+use chumsky::IterParser;
 use alloc::vec::Vec;
 use alloc::vec;
+use chumsky::input::ValueInput;
+use chumsky::Parser;
+use chumsky::prelude::{choice, just, SimpleSpan};
 use crate::compile::parser::block::Block;
-use crate::compile::parser::{AllowTrailing, ParseAst, Parser};
 use crate::compile::parser::r#type::Type;
-use crate::compile::span::SimpleSpan;
 use crate::symbol::Ident;
-use crate::compile::error::{Error, Result};
 use crate::compile::parser::block::expr::Expr;
-use crate::compile::tokenizer::{TokenKind, TokenTreeKind};
+use crate::compile::parser::{OvalParserExt, ParseAst, ParserExtra};
+use crate::compile::tokenizer::Token;
 
 
 #[derive(Debug)]
@@ -17,13 +19,16 @@ enum Visibility {
 }
 
 impl ParseAst for Visibility {
-    fn parse_inner<'src>(parser: &mut Parser<'src, '_, '_>) -> Result<'src, Self> {
-        Ok(parser.maybe_eat(TokenKind::Pub).map_or(Visibility::Private, |_| Visibility::Public))
+    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        just(Token::Pub).or_not().map(|tok| match tok {
+            Some(_) => Visibility::Public,
+            None => Visibility::Private
+        })
     }
 }
 
 #[derive(Debug)]
-pub struct Function {
+pub struct FunctionItem {
     visibility: Visibility,
     name: Ident,
     arguments: Vec<(Ident, Type)>,
@@ -31,42 +36,36 @@ pub struct Function {
     body: Block
 }
 
-impl ParseAst for Function {
-    fn parse_inner<'src>(parser: &mut Parser<'src, '_, '_>) -> Result<'src, Self> {
-        let visibility = parser.parse::<Visibility>()?;
+impl ParseAst for FunctionItem {
+    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        let arg_parser = Ident::parser()
+            .then_ignore(just(Token::Colon))
+            .then(Type::parser())
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<_>>()
+            .in_parens();
 
-        parser.eat(TokenKind::Fn)?;
-        let name = parser.parse::<Ident>()?;
-        let TokenTreeKind::Paren(sub_slice) = parser.eat(TokenKind::RParen)?.kind() else {
-            unreachable!()
-        };
+        let return_type_parser = just(Token::Arrow)
+            .ignore_then(Type::parser())
+            .or_not()
+            .map(|x| x.unwrap_or(const { Type::Tuple(vec![]) }));
 
-        let args = {
-            let mut arg_parser = parser.sub_parser(sub_slice);
-            arg_parser.parse_list_with::<(Ident, Type), AllowTrailing>(TokenKind::Comma, |parser| {
-                let ident = Ident::parse_inner(parser)?;
-                let _colon = parser.eat(TokenKind::Colon)?;
-                let ty = Type::parse_inner(parser)?;
-                Ok((ident, ty))
-            })?
-        };
-
-
-        
-        let ty = match parser.maybe_eat(TokenKind::Arrow) {
-            Some(_) => parser.parse::<Type>()?,
-            None => Type::Tuple(vec![])
-        };
-
-        let body = parser.parse::<Block>()?;
-
-        Ok(Self {
-            visibility,
-            name,
-            arguments: args,
-            return_type: ty,
-            body,
-        })
+        Visibility::parser()
+            .then_ignore(just(Token::Fn))
+            .then(Ident::parser())
+            .then(arg_parser)
+            .then(return_type_parser)
+            .then(Block::parser())
+            .map(|((((visibility, name), arguments), return_type), body)| {
+                FunctionItem {
+                    visibility,
+                    name,
+                    arguments,
+                    return_type,
+                    body,
+                }
+            })
     }
 }
 
@@ -76,34 +75,34 @@ pub struct ConstItem {
     visibility: Visibility,
     name: Ident,
     ty: Type,
-    val: Expr
+    value: Expr
 }
 
 impl ParseAst for ConstItem {
-    fn parse_inner<'src>(parser: &mut Parser<'src, '_, '_>) -> Result<'src, Self> {
-        let visibility = parser.parse::<Visibility>()?;
-        
-        parser.eat(TokenKind::Const)?;
-        let name = parser.parse::<Ident>()?;
-        parser.eat(TokenKind::Colon)?;
-        let ty = parser.parse::<Type>()?;
-        parser.eat(TokenKind::Assign)?;
-        let val = parser.parse::<Expr>()?;
-        parser.eat(TokenKind::SemiColon)?;
-        
-        Ok(Self {
-            visibility,
-            name,
-            ty,
-            val,
-        })
+    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        Visibility::parser()
+            .then_ignore(just(Token::Const))
+            .then(Ident::parser())
+            .then_ignore(just(Token::Colon))
+            .then(Type::parser())
+            .then_ignore(just(Token::Assign))
+            .then(Expr::parser())
+            .then_ignore(just(Token::SemiColon))
+            .map(|(((visibility, name), ty), value)| {
+                ConstItem {
+                    visibility,
+                    name,
+                    ty,
+                    value,
+                }
+            })
     }
 }
 
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum ItemRepr {
-    Function(Function),
+    Function(FunctionItem),
     Const(ConstItem)
 }
 
@@ -114,27 +113,13 @@ pub struct Item {
 }
 
 impl ParseAst for Item {
-    fn parse_inner<'src>(parser: &mut Parser<'src, '_, '_>) -> Result<'src, Self> {
-        let mut errors = vec![];
-        macro_rules! try_parse {
-            ($($path:ident($T: ty)),+ $(,)?) => {
-                $(match parser.parse_spanned::<$T>() {
-                    Ok((item, span)) => return Ok(Self {
-                        span: span.expect("items can't be empty"),
-                        repr: ItemRepr::$path(item)
-                    }),
-                    Err(err) => errors.push(err)
-                })+
-            };
-        }
-
-
-        try_parse!(
-            Function(Function),
-            Const(ConstItem),
-        );
-
-
-        Err(errors.into_iter().reduce(Error::merge).expect("at at least one error occurred"))
+    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        choice((
+            FunctionItem::parser().map(ItemRepr::Function),
+            ConstItem::parser().map(ItemRepr::Const)
+        )).map_with(|repr, extra| Item {
+            span: extra.span(),
+            repr
+        })
     }
 }

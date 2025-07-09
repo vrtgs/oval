@@ -2,6 +2,7 @@ use alloc::string::String;
 use core::fmt::{Debug, Formatter};
 use crate::compile::tokenizer::TokenizedSource;
 use crate::symbol::Path;
+use crate::compile::error::Result;
 
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
@@ -44,7 +45,7 @@ impl SourceFile {
         &self.contents
     }
 
-    pub fn tokenize(&self) -> TokenizedSource {
+    pub fn tokenize(&self) -> Result<TokenizedSource> {
         TokenizedSource::new(self)
     }
 }

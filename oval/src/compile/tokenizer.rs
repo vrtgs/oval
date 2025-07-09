@@ -1,49 +1,19 @@
-use alloc::vec;
 use alloc::vec::Vec;
-use alloc::format;
-use core::fmt::{Debug, Formatter};
+use alloc::vec;
 use core::str::Chars;
+use core::fmt::{Debug, Formatter};
+use chumsky::span::SimpleSpan;
 use cow_array::CowArray;
-use crate::compile;
-use crate::compile::error::{Result, SyntaxError};
 use crate::compile::source_file::SourceFile;
-use crate::compile::span::{FullSpan, SimpleSpan};
-
-
-#[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
-pub enum LiteralKind {
-    String { terminated: bool },
-    Char { terminated: bool },
-    Float,
-    Int
-}
-
-impl LiteralKind {
-    fn repr(self) -> &'static str {
-        macro_rules! lit_repr {
-            ($($lit_name: ident => $lit_repr: literal),+ $(,)?) => {
-                match self {
-                    $(Self::$lit_name { .. } => concat!($lit_repr, "literal")),*
-                }
-            };
-        }
-        
-        lit_repr!(
-            String => "string",
-            Char => "character",
-            Float => "float",
-            Int => "int"
-        )
-    }
-}
+use crate::compile::Spanned;
+use chumsky::error::Rich;
 
 macro_rules! make_token {
-    (enum $enum:ident, $enum2:ident {
+    (enum $enum:ident {
         $({$($tt:tt)*})*
     }) => {
         make_token! {
             $enum,
-            $enum2,
             acc: { $({$($tt)*})* }
             keywords: {}
             parens: {}
@@ -53,7 +23,6 @@ macro_rules! make_token {
 
     (
         $enum:ident,
-        $enum2:ident,
         acc: { { KW: $new_kw_name:ident = $new_kw:literal } $($rest:tt)* }
         keywords: { $($kw_name:ident = $kw:literal),* }
         parens: { $($paren_name:ident = [$r_paren:literal, $l_paren: literal]),* }
@@ -61,7 +30,6 @@ macro_rules! make_token {
     ) => {
         make_token! {
             $enum,
-            $enum2,
             acc: { $($rest)* }
             keywords: { $($kw_name = $kw,)* $new_kw_name = $new_kw }
             parens: { $($paren_name = [$r_paren, $l_paren]),* }
@@ -71,7 +39,6 @@ macro_rules! make_token {
 
     (
         $enum:ident,
-        $enum2:ident,
         acc: { { paren: $new_paren_name:ident, $new_paren_str_name: literal = [$new_r_paren:literal, $new_l_parent:literal] } $($rest:tt)* }
         keywords: { $($kw_name:ident = $kw:literal),* }
         parens: { $($paren_name:ident, $paren_str_name:literal = [$r_paren:literal, $l_paren: literal]),* }
@@ -79,7 +46,6 @@ macro_rules! make_token {
     ) => {
         make_token! {
             $enum,
-            $enum2,
             acc: { $($rest)* }
             keywords: { $($kw_name = $kw),* }
             parens: { $($paren_name, $paren_str_name = [$r_paren, $l_paren],)*  $new_paren_name, $new_paren_str_name = [$new_r_paren, $new_l_parent] }
@@ -89,7 +55,6 @@ macro_rules! make_token {
 
     (
         $enum:ident,
-        $enum2:ident,
         acc: { { $new_str_name:ident = [$($new_str:literal),+] } $($rest:tt)* }
         keywords: { $($kw_name:ident = $kw:literal),* }
         parens: { $($paren_name:ident, $paren_str_name:literal = [$r_paren:literal, $l_paren: literal]),* }
@@ -97,7 +62,6 @@ macro_rules! make_token {
     ) => {
         make_token! {
             $enum,
-            $enum2,
             acc: { $($rest)* }
             keywords: { $($kw_name = $kw),* }
             parens: { $($paren_name, $paren_str_name = [$r_paren, $l_paren]),* }
@@ -106,82 +70,62 @@ macro_rules! make_token {
     };
     
     (
-        $token_kind:ident,
-        $token_tree_kind:ident,
+        $token:ident,
         acc: {}
         keywords: { $($kw_name:ident = $kw:literal),* }
-        parens: { $($paren_name:ident, $paren_str_name:literal = [$r_paren:literal, $l_paren: literal]),* }
+        parens: { $($paren_name:ident, $paren_str_name:literal = [$l_paren:literal, $r_paren: literal]),* }
         string_based: { $($str_name:ident = [$first_char: literal $(, $suffix_str:literal)?]),* }
     ) => {
         paste::paste! {
             #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
-            pub enum $token_kind {
+            pub enum $token {
                 Ident,
-                Literal(LiteralKind),
-                LineComment,
-                BlockComment {
-                    terminated: bool
-                },
-                $([<R $paren_name>], [<L $paren_name>],)*
+                String,
+                Char,
+                Float,
+                Int,
+                $([<L $paren_name>], [<R $paren_name>],)*
                 $($kw_name,)*
                 $($str_name,)*
-                Unknown(char)
             }
             
-            impl $token_kind {
+            impl $token {
                 pub fn repr(self) -> &'static str {
                     match self {
                         Self::Ident => "ident",
-                        Self::Literal(lk) => lk.repr(),
-                        Self::LineComment => "line comment",
-                        Self::BlockComment { .. } => "block comment",
+                        Self::String => "string literal",
+                        Self::Char => "character literal",
+                        Self::Float => "float literal",
+                        Self::Int => "int literal",
                         $(
-                        Self::[<R $paren_name>] => stringify!($r_paren),
-                        Self::[<L $paren_name>] => stringify!($l_paren),
+                        Self::[<L $paren_name>] => concat!($l_paren, ""),
+                        Self::[<R $paren_name>] => concat!($r_paren, ""),
                         )*
                         $(Self::$kw_name => $kw,)*
                         $(Self::$str_name => concat!(stringify!($first_char) $(, $suffix_str)? ),)*
-                        Self::Unknown(_) => "<unknown>"
                     }
                 }
             }
         }
-        
-        
 
-        #[derive(Clone, Debug)]
-        pub enum $token_tree_kind {
-            Ident,
-            Literal(LiteralKind),
-            $($paren_name(Vec<TokenTree>),)*
-            $($kw_name,)*
-            $($str_name,)*
-        }
-
-        impl $token_tree_kind {
-            pub fn start_token(&self) -> $token_kind {
-                match *self {
-                    Self::Ident => $token_kind::Ident,
-                    Self::Literal(lk) => $token_kind::Literal(lk),
-                    $(
-                    Self::$paren_name(_) => {
-                        paste::paste! { $token_kind::[<R $paren_name>] }
-                    },
-                    )*
-                    $(Self::$kw_name => $token_kind::$kw_name,)*
-                    $(Self::$str_name => $token_kind::$str_name,)*
-                }
+        impl core::fmt::Display for $token {
+            fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+                f.write_str(self.repr())
             }
         }
-
 
         struct Tokens<'a> {
             file: &'a str,
             chars: Chars<'a>
         }
 
+        enum TokenizerError {
+            Unknown(char),
+            Unterminated { name: &'static str }
+        }
+
         impl<'a> Iterator for Tokens<'a> {
-            type Item = Token;
+            type Item = Spanned<Result<$token, TokenizerError>>;
 
             fn next(&mut self) -> Option<Self::Item> {
                 let file_chars = &mut self.chars;
@@ -200,12 +144,16 @@ macro_rules! make_token {
                     let start = chars_to_offset(&file_chars) - ch.len_utf8();
 
                     let token_span = |chars_now| start..chars_to_offset(chars_now);
-                    
-                    let make_token = |token_type, chars_now| {
-                        Token {
-                            span: SimpleSpan::from_range(token_span(chars_now)),
-                            kind:token_type,
+
+                    let make_maybe_token = |value, chars_now| {
+                        Spanned {
+                            span: SimpleSpan::from(token_span(chars_now)),
+                            value,
                         }
+                    };
+
+                    let make_token = |token, chars_now| {
+                        make_maybe_token(Ok(token), chars_now)
                     };
 
                     // filter comments
@@ -219,7 +167,7 @@ macro_rules! make_token {
                                     None => *file_chars = "".chars()
                                 }
 
-                                return Some(make_token(TokenKind::LineComment, &file_chars));
+                                continue 'tokenizing
                             },
                             Some('*') => {
                                 let str = file_chars.as_str();
@@ -234,7 +182,11 @@ macro_rules! make_token {
                                     }
                                 };
 
-                                return Some(make_token(TokenKind::BlockComment { terminated }, &file_chars));
+                                if !terminated {
+                                    return Some(make_maybe_token(Err(TokenizerError::Unterminated { name: "block comment" }), &file_chars));
+                                }
+
+                                continue 'tokenizing
                             }
                             _ => *file_chars = prev
                         }
@@ -248,8 +200,8 @@ macro_rules! make_token {
 
                             let range = token_span(&file_chars);
                             let token_ty = match &self.file[range] {
-                                $($kw => TokenKind::$kw_name,)*
-                                _ => TokenKind::Ident
+                                $($kw => $token::$kw_name,)*
+                                _ => $token::Ident
                             };
                             
                             make_token(token_ty, &file_chars)
@@ -275,12 +227,12 @@ macro_rules! make_token {
                                 file_chars.next();
                             }
 
-                            let mut lit_kind = LiteralKind::Int;
+                            let mut lit_kind = Token::Int;
                             let mut float_check = file_chars.clone();
                             // TODO: scientific notation
                             if radix == 10 && float_check.next() == Some('.') {
                                 if next_digit(&mut float_check) {
-                                    lit_kind = LiteralKind::Float;
+                                    lit_kind = Token::Float;
                                     *file_chars = float_check;
 
                                     while next_digit(&mut file_chars.clone()) {
@@ -289,7 +241,7 @@ macro_rules! make_token {
                                 }
                             }
 
-                            make_token(TokenKind::Literal(lit_kind), &file_chars)
+                            make_token(lit_kind, &file_chars)
                         }
                         '"' | '\'' => {
                             let mut terminated = false;
@@ -306,16 +258,21 @@ macro_rules! make_token {
                             }
 
                             let lit_kind = match ch {
-                                '"' => LiteralKind::String { terminated },
-                                '\'' => LiteralKind::Char { terminated },
+                                '"' => Token::String,
+                                '\'' => Token::Char,
                                 _ => unreachable!()
                             };
 
-                            make_token(TokenKind::Literal(lit_kind), &file_chars)
+                            let maybe_token = match terminated {
+                                true => Ok(lit_kind),
+                                false => Err(TokenizerError::Unterminated { name: lit_kind.repr() })
+                            };
+
+                            make_maybe_token(maybe_token, &file_chars)
                         }
                         $(
-                        $r_paren => make_token(paste::paste! { TokenKind::[<R $paren_name>] }, &file_chars),
-                        $l_paren => make_token(paste::paste! { TokenKind::[<L $paren_name>] }, &file_chars),
+                        $l_paren => make_token(paste::paste! { $token::[<L $paren_name>] }, &file_chars),
+                        $r_paren => make_token(paste::paste! { $token::[<R $paren_name>] }, &file_chars),
                         )*
                         #[allow(unused_labels)]
                         unknown => 'ret_unknown: {
@@ -329,12 +286,12 @@ macro_rules! make_token {
                                         *file_chars = suffix.chars();
                                         )?
                                         
-                                        break 'ret_unknown make_token(TokenKind::$str_name, &file_chars);
+                                        break 'ret_unknown make_token($token::$str_name, &file_chars);
                                     }
                                 }
                             )*
 
-                            make_token(TokenKind::Unknown(unknown), &file_chars)
+                            make_maybe_token(Err(TokenizerError::Unknown(unknown)), &file_chars)
                         }
                     };
                     
@@ -349,15 +306,14 @@ macro_rules! make_token {
             }
         }
 
-        pub(crate) fn tokenize(file: &str) -> impl Iterator<Item=Token> {
+        pub(crate) fn tokenize(file: &str) -> impl Iterator<Item=Spanned<Result<$token, TokenizerError>>> {
             Tokens {
                 file,
                 chars: file.chars()
             }
         }
-        
-        
-        pub(crate) fn normalize_tokens(tokenized: TokenizedSource) -> Result<TokenStream> {
+
+        fn normalize_tokens<'a>(source: &'a SourceFile, tokens_iter: impl Iterator<Item=Spanned<Result<$token, TokenizerError>>>) -> $crate::compile::error::Result<'a, Vec<Spanned<Token>>> {
             enum ParenKind { 
                 $($paren_name),*
             }
@@ -373,120 +329,92 @@ macro_rules! make_token {
             struct ParenStackEntry {
                 span_start: SimpleSpan,
                 paren_kind: ParenKind,
-                tokens: Vec<TokenTree>
             }
 
-            let mut errors = vec![];
             let mut paren_stack: Vec<ParenStackEntry> = vec![];
+            let mut errors = vec![];
             let mut tokens = vec![];
-            
-            fn active_stack<'a>(tokens: &'a mut Vec<TokenTree>, paren_stack: &'a mut Vec<ParenStackEntry>) -> &'a mut Vec<TokenTree> { 
-                paren_stack
-                    .last_mut()
-                    .map(|entry| &mut entry.tokens)
-                    .unwrap_or(tokens)
-            }
-
-            let source = tokenized.source;
 
             'parsing:
-            for &token in &tokenized.tokens {
+            for token in tokens_iter {
                 let span = token.span;
 
                 let merge_span_back = |span2: SimpleSpan| {
-                    SimpleSpan::from_range(span2.start()..span.end())
+                    SimpleSpan::from(span2.start..span.end)
                 };
-                
-                let kind = paste::paste! {
-                    match token.kind {
-                        TokenKind::Ident => TokenTreeKind::Ident,
-                        TokenKind::Literal(lit_kind) => TokenTreeKind::Literal(lit_kind),
-                        $(TokenKind::$kw_name => TokenTreeKind::$kw_name,)*
-                        $(TokenKind::$str_name => TokenTreeKind::$str_name,)*
-                        
-                        TokenKind::BlockComment { terminated } => {
-                            if !terminated {
-                                errors.push(SyntaxError::custom(
-                                    Some(span),
-                                    "unterminated block comment",
-                                ))
-                            }
-                            continue 'parsing
-                        }
-                        TokenKind::LineComment => continue 'parsing,
-                        TokenKind::Unknown(ch) => {
-                            errors.push(SyntaxError::custom(
-                                Some(span),
-                                format!("unexpected {ch}")
-                            ));
-                            continue 'parsing
-                        }
-                        
-                        $(
-                        TokenKind::[<R $paren_name>] => {
-                            paren_stack.push(ParenStackEntry {
-                                span_start: span,
-                                paren_kind: ParenKind::$paren_name,
-                                tokens: vec![],
-                            });
-                            continue 'parsing
-                        }
-                        TokenKind::[<L $paren_name>] => {
-                            #[allow(unreachable_patterns)]
-                            let (span_start, message) = match paren_stack.pop() {
-                                Some(ParenStackEntry { span_start, paren_kind: ParenKind::$paren_name, tokens: paren_tokens }) => {
-                                    active_stack(&mut tokens, &mut paren_stack).push(TokenTree {
-                                        span: merge_span_back(span_start),
-                                        kind: TokenTreeKind::$paren_name(paren_tokens)
-                                    });
-                                    continue 'parsing
-                                }
-                                
-                                Some(ParenStackEntry { span_start, paren_kind, .. }) => {
-                                    (span_start, format!(concat!("mismatched closing delimiter; expected ", "paren", " {}"), paren_kind.name()))
-                                }
-                                
-                                None => {
-                                    errors.push(SyntaxError::custom(
-                                        Some(span),
-                                        "unbalanced paren"
-                                    ));
-                                    continue 'parsing
-                                }
-                            };
 
-                            errors.push(SyntaxError::custom(
-                                merge_span_back(span_start),
-                                message
-                            ));
-                            continue 'parsing
-                        },)*
+                let token = match token.value {
+                    Ok(x) => x,
+                    Err(TokenizerError::Unknown(ch)) => {
+                        errors.push(Rich::custom(
+                            span,
+                            format_args!("unexpected {ch}")
+                        ));
+                        continue 'parsing
+                    }
+                    Err(TokenizerError::Unterminated { name }) => {
+                        errors.push(Rich::custom(
+                            span,
+                            format_args!("unterminated {name}")
+                        ));
+                        continue 'parsing
                     }
                 };
 
-                active_stack(&mut tokens, &mut paren_stack).push(TokenTree {
+                paste::paste! {
+                    match token {
+                        $(
+                        $token::[<L $paren_name>] => {
+                            paren_stack.push(ParenStackEntry {
+                                span_start: span,
+                                paren_kind: ParenKind::$paren_name,
+                            });
+                        }
+                        $token::[<R $paren_name>] => match paren_stack.pop() {
+                            Some(ParenStackEntry { span_start: _, paren_kind: ParenKind::$paren_name }) => {},
+                            Some(ParenStackEntry { span_start, paren_kind }) => {
+                                let (span_start, message) = (
+                                    span_start,
+                                    alloc::format!(concat!("mismatched closing delimiter; expected ", "paren", " {}"), paren_kind.name())
+                                );
+                                errors.push(Rich::custom(
+                                    merge_span_back(span_start),
+                                    message
+                                ));
+                                continue 'parsing
+                            }
+                            None => {
+                                errors.push(Rich::custom(
+                                    span,
+                                    "unbalanced paren"
+                                ));
+                                continue 'parsing
+                            }
+                        },)*
+                        _ => {}
+                    }
+                };
+
+                tokens.push(Spanned {
                     span,
-                    kind,
+                    value: token
                 })
             }
 
             if !errors.is_empty() {
-                return Err(compile::error::Error::from(compile::error::ErrorKind::Syntax {
+                return Err(crate::compile::error::Error::syntax_error(
                     source,
-                    errors,
-                }))
+                    errors
+                ))
             }
 
-            Ok(TokenStream {
-                source,
-                token_trees: CowArray::from_vec(tokens),
-            })
+            Ok(tokens)
         }
     };
 }
 
 make_token! {
-    enum TokenKind, TokenTreeKind {
+    enum Token {
         { KW: Let   = "let"   }
         { KW: Ref   = "ref"   }
         { KW: Mut   = "mut"   }
@@ -498,11 +426,13 @@ make_token! {
         { KW: Loop  = "loop"  }
         { KW: While = "while" }
         { KW: For   = "for"   }
+        { KW: True  = "true"  }
+        { KW: False = "false" }
         { KW: Wildcard = "_"  }
 
         { paren: Paren, "paren"     = ['(', ')'] }
-        { paren: Bracket, "bracket" = ['{', '}'] }
-        { paren: Brace, "brace"     = ['[', ']'] }
+        { paren: Bracket, "curly bracket" = ['{', '}'] }
+        { paren: SquareBracket, "square bracket"  = ['[', ']'] }
 
         // Control
         { Arrow = ['-', ">"] }
@@ -559,112 +489,56 @@ make_token! {
 }
 
 
-#[derive(Debug, Copy, Clone)]
-pub struct Token {
-    span: SimpleSpan,
-    kind: TokenKind,
+#[derive(Copy, Clone)]
+pub struct TokenView<'src> {
+    source: &'src SourceFile,
+    token: Spanned<Token>,
 }
+impl<'src> TokenView<'src> {
+    pub fn as_token(&self) -> Token {
+        self.token.value
+    }
 
-#[derive(Debug, Clone)]
-pub struct TokenTree {
-    span: SimpleSpan,
-    kind: TokenTreeKind,
-}
-
-impl Token {
     pub fn span(&self) -> SimpleSpan {
-        self.span
+        self.token.span
     }
 
-    pub fn kind(&self) -> TokenKind {
-        self.kind
-    }
-}
-
-impl TokenTree {
-    pub fn span(&self) -> SimpleSpan {
-        self.span
-    }
-
-    pub fn kind(&self) -> &TokenTreeKind {
-        &self.kind
-    }
-
-    pub fn start_token_kind(&self) -> TokenKind {
-        self.kind().start_token()
+    pub fn view(&self) -> &'src str {
+        &self.source.contents()[self.span().into_range()]
     }
 }
-
-macro_rules! make_view {
-    (
-        $($(#[$($meta:tt)*])*
-        pub struct $view_name:ident $(<$($other_life: lifetime)*>)? ($field_name: ident : ($ty:ty, $kind_ty:ty));)+
-    ) => {$(
-        #[derive(Copy, Clone)]
-        $(#[$($meta)*])*
-        pub struct $view_name<$($($other_life,)*)? 'src> {
-            source: &'src SourceFile,
-            $field_name: $ty
-        }
-
-        impl<$($($other_life,)*)? 'src> $view_name<$($($other_life,)*)? 'src> {
-            paste::paste! {
-                pub fn [<as_ $field_name>](&self) -> $ty {
-                    self.$field_name
-                }
-            }
-
-            pub fn kind(&self) -> &$kind_ty {
-                &self.$field_name.kind
-            }
-
-            pub fn span(&self) -> FullSpan<'src> {
-                self.simple_span().into_full(self.source)
-            }
-
-            pub fn simple_span(&self) -> SimpleSpan {
-                self.$field_name.span
-            }
-
-            pub fn view(&self) -> &'src str {
-                self.span().slice()
-            }
-        }
-
-        impl<$($($other_life,)*)? 'src> Debug for $view_name<$($($other_life,)*)? 'src> {
-            fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-                f
-                    .debug_struct(stringify!($view_name))
-                    .field("span", &self.simple_span())
-                    .field("kind", self.kind())
-                    .field("view", &self.view())
-                    .finish()
-            }
-        }
-    )+};
-}
-
-make_view!{
-    pub struct TokenView(token: (Token, TokenKind));
-    pub struct TokenTreeView<'stream>(token_tree: (&'stream TokenTree, TokenTreeKind));
+impl<'src> Debug for TokenView<'src> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
+        f
+            .debug_struct(stringify!( TokenView ))
+            .field("span", &self.span())
+            .field("token", &self.as_token())
+            .field("view", &self.view())
+            .finish()
+    }
 }
 
 pub struct TokenizedSource<'a> {
     source: &'a SourceFile,
-    tokens: CowArray<Token>,
+    tokens: CowArray<Spanned<Token>>,
 }
 
-pub struct TokenStream<'a> {
-    pub(crate) source: &'a SourceFile,
-    pub(crate) token_trees: CowArray<TokenTree>,
-}
 
 impl<'a> TokenizedSource<'a> {
-    pub(crate) fn new(source: &'a SourceFile) -> Self {
-        Self {
+    pub(crate) fn new(source: &'a SourceFile) -> crate::compile::error::Result<'a, Self> {
+        Ok(Self {
             source,
-            tokens: tokenize(source.contents()).collect()
-        }
+            tokens: CowArray::from_vec(
+                normalize_tokens(
+                    source,
+                    tokenize(source.contents())
+                )?
+            )
+        })
+    }
+
+    pub fn source(&self) -> &'a SourceFile {
+        &self.source
     }
     
     pub fn tokens(&self) -> impl Iterator<Item=TokenView<'a>> + DoubleEndedIterator + ExactSizeIterator {
@@ -674,22 +548,8 @@ impl<'a> TokenizedSource<'a> {
             token,
         })
     }
-    
-    pub fn into_stream(self) -> Result<'a, TokenStream<'a>> {
-        normalize_tokens(self)
-    }
-}
 
-impl<'src> TokenStream<'src> {
-    pub(crate) fn tokens(&self) -> &[TokenTree] {
-        &self.token_trees
-    }
-
-    pub fn stream<'stream>(&'stream self) -> impl Iterator<Item=TokenTreeView<'stream, 'src>> + DoubleEndedIterator + ExactSizeIterator {
-        let source = self.source;
-        self.token_trees.iter().map(move |token_tree| TokenTreeView {
-            source,
-            token_tree,
-        })
+    pub(crate) fn tokens_slice(&self) -> &[Spanned<Token>] {
+        &self.tokens
     }
 }

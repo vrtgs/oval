@@ -1,24 +1,21 @@
+use chumsky::{select, IterParser};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use crate::compile::error::SyntaxError;
+use chumsky::input::ValueInput;
+use chumsky::pratt::{right, left, postfix, prefix, infix};
+use chumsky::prelude::{just, recursive, SimpleSpan};
+use chumsky::primitive::choice;
 use crate::compile::parser::block::Block;
-use crate::compile::parser::{Tuple, ParseAst, Parser, TupleOrParens};
-use crate::compile::span::SimpleSpan;
-use crate::compile::tokenizer::{LiteralKind, TokenKind, TokenTreeKind};
+use crate::compile::parser::{recursive_parsers, OvalParserExt, ParseAst, Parser, ParserExtra};
+use crate::compile::tokenizer::Token;
 use crate::symbol::Path;
 
 #[derive(Debug, Copy, Clone)]
-pub enum AssignOpKind {
+pub enum AssignOp {
     /// `=`
     Simple,
     /// `+=`
     Add
-}
-
-#[derive(Debug, Copy, Clone)]
-pub struct AssignOp {
-    span: SimpleSpan,
-    assign_op_kind: AssignOpKind
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -31,217 +28,294 @@ pub enum UnOp {
     Neg,
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum BinOpKind {
-    /// The `+` operator (addition)
-    Add,
-    /// The `-` operator (subtraction)
-    Sub,
-    /// The `*` operator (multiplication)
-    Mul,
-    /// The `/` operator (division)
-    Div,
-    /// The `/%` operator (euclidean division)
-    EDiv,
-    /// The `%` operator (remainder)
-    Rem,
-    /// The `%%` operator (euclidean modulus)
-    EMod,
-    /// The `&&` operator (logical and)
-    LogicalAnd,
-    /// The `||` operator (logical or)
-    LogicalOr,
-    /// The `^` operator (bitwise xor)
-    BitXor,
-    /// The `&` operator (bitwise and)
-    BitAnd,
-    /// The `|` operator (bitwise or)
-    BitOr,
-    /// The `<<` operator (shift left)
-    Shl,
-    /// The `>>` operator (shift right)
-    Shr,
-    /// The `==` operator (equality)
-    Eq,
-    /// The `<` operator (less than)
-    Lt,
-    /// The `<=` operator (less than or equal to)
-    Le,
-    /// The `!=` operator (not equal to)
-    Ne,
-    /// The `>=` operator (greater than or equal to)
-    Ge,
-    /// The `>` operator (greater than)
-    Gt,
+impl UnOp {
+    const BINDING_POWER: u16 = 10;
 }
 
-#[derive(Debug, Copy, Clone)]
-pub struct BinOp {
-    kind: BinOpKind,
-    span: SimpleSpan
-}
-impl BinOp {
-    fn precedence(&self) -> u8 {
-        match self.kind {
-            BinOpKind::Mul | BinOpKind::Div | BinOpKind::Rem | BinOpKind::EMod | BinOpKind::EDiv => 10,
-            BinOpKind::Add | BinOpKind::Sub => 9,
-            BinOpKind::Shl | BinOpKind::Shr => 8,
-            BinOpKind::BitAnd => 7,
-            BinOpKind::BitXor => 6,
-            BinOpKind::BitOr => 5,
-            BinOpKind::Eq | BinOpKind::Lt | BinOpKind::Le | BinOpKind::Ne | BinOpKind::Ge | BinOpKind::Gt => 4,
-            BinOpKind::LogicalAnd => 3,
-            BinOpKind::LogicalOr => 2,
+macro_rules! declare_bin_ops {
+    (
+        enum $name: ident {
+            $($(#[$($doc:tt)*])* $variant: ident),+ $(,)?
         }
+    ) => {
+        #[derive(Debug, Copy, Clone)]
+        pub enum $name {
+            $(
+            $(#[$($doc)*])*
+            $variant
+            ),+
+        }
+
+        impl $name {
+            const VARIANTS: &[Self] = &[$(Self::$variant),+];
+        }
+    };
+}
+
+declare_bin_ops! {
+    enum BinOp {
+        /// The `+` operator (addition)
+        Add,
+        /// The `-` operator (subtraction)
+        Sub,
+        /// The `*` operator (multiplication)
+        Mul,
+        /// The `/` operator (division)
+        Div,
+        /// The `/%` operator (euclidean division)
+        EDiv,
+        /// The `%` operator (remainder)
+        Rem,
+        /// The `%%` operator (euclidean modulus)
+        EMod,
+        /// The `&&` operator (logical and)
+        LogicalAnd,
+        /// The `||` operator (logical or)
+        LogicalOr,
+        /// The `^` operator (bitwise xor)
+        BitXor,
+        /// The `&` operator (bitwise and)
+        BitAnd,
+        /// The `|` operator (bitwise or)
+        BitOr,
+        /// The `<<` operator (shift left)
+        Shl,
+        /// The `>>` operator (shift right)
+        Shr,
+        /// The `==` operator (equality)
+        Eq,
+        /// The `<` operator (less than)
+        Lt,
+        /// The `<=` operator (less than or equal to)
+        Le,
+        /// The `!=` operator (not equal to)
+        Ne,
+        /// The `>=` operator (greater than or equal to)
+        Ge,
+        /// The `>` operator (greater than)
+        Gt,
     }
+}
+
+
+impl BinOp {
+    const MIN_BINDING_POWER: u16 = 2;
+    const MAX_BINDING_POWER: u16 = 10;
+
+    const fn binding_power(self) -> u16 {
+        let pow = match self {
+            BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::EMod | BinOp::EDiv => 10,
+            BinOp::Add | BinOp::Sub => 9,
+            BinOp::Shl | BinOp::Shr => 8,
+            BinOp::BitAnd => 7,
+            BinOp::BitXor => 6,
+            BinOp::BitOr => 5,
+            BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => 4,
+            BinOp::LogicalAnd => 3,
+            BinOp::LogicalOr => 2,
+        };
+
+        assert!(Self::MIN_BINDING_POWER <= pow && pow <= Self::MAX_BINDING_POWER);
+
+        pow
+    }
+}
+
+#[derive(Debug)]
+pub enum LiteralKind {
+    String,
+    Num,
+    Bool(bool)
 }
 
 #[derive(Debug)]
 pub enum Expr {
     Path(Path),
     Tuple(Vec<Expr>),
+    Array(Vec<Expr>),
     Parens(Box<Expr>),
     BinOp(BinOp, Box<(Expr, Expr)>),
-    Unary(UnOp, Box<Expr>),
-    Literal(LiteralKind, SimpleSpan),
+    UnOp(UnOp, Box<Expr>),
+    Literal(LiteralKind),
     Block(Block),
+    Call(Box<Expr>, Vec<Expr>),
     Loop(Block),
+    While(Box<Expr>, Block),
     /// in the expr `x = b + z` `x` will be the first expr, `b + z` will be the second
     /// and the assign op will be `=`
     Assignment(AssignOp, Box<(Expr, Expr)>),
 
-    // TODO: WhileLoop(Box<Expr>, Block),
     // TODO: ForLoop
     // WISHLIST: Closure
 }
 
+impl Expr {
+    pub(crate) fn make_parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>(
+        block_parser: impl Parser<'a, I, Block, ParserExtra<'a>> + Clone + 'a,
+    ) -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        recursive(|expr_parser| {
+            let parens_parser = expr_parser
+                .clone()
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
+                .then(just(Token::Comma).or_not().map(|x| x.is_some()))
+                .in_parens()
+                // TODO: tuple parsing with less code duplication
+                .map(|(mut list, leading)| {
+                    if !leading {
+                        match <[_; 1]>::try_from(list) {
+                            Ok([x]) => return Expr::Parens(Box::new(x)),
+                            Err(fail) => list = fail
+                        }
+                    }
+
+                    Expr::Tuple(list)
+                });
+
+            let list_parser = expr_parser
+                .clone()
+                .separated_by(just(Token::Comma))
+                .allow_trailing()
+                .collect::<Vec<Expr>>();
+
+            let array = list_parser
+                .clone()
+                .in_square_brackets()
+                .map(Expr::Array);
+
+            let literal = select! {
+                Token::String => LiteralKind::String,
+                Token::Float | Token::Int => LiteralKind::Num,
+                Token::True => LiteralKind::Bool(true),
+                Token::False => LiteralKind::Bool(true),
+            }.labelled("literal value");
+
+            let atom = choice((
+                Path::parser().map(Expr::Path),
+                literal.map(Expr::Literal),
+                block_parser.clone().map(Expr::Block),
+                just(Token::Loop).ignore_then(block_parser.clone()).map(Expr::Loop),
+                just(Token::While)
+                    .ignore_then(expr_parser.then(block_parser.clone()))
+                    .map(|(expr, block)| Expr::While(Box::new(expr), block)),
+                parens_parser,
+                array
+            ));
+
+
+            macro_rules! make_bin_op_grouping {
+                ($($bin_op:ident = $token: ident)|+) => {
+                    // last but not least we have assignments
+                    chumsky::pratt::infix(
+                        left(const {
+                            let binding_powers = [$(BinOp::$bin_op.binding_power()),+];
+                            let [first, rest @ ..] = binding_powers;
+                            let mut rest = rest.as_slice();
+
+                            while let [additional, leftover @ ..] = rest {
+                                assert!(*additional == first, "mismatched binding power");
+                                rest = leftover;
+                            }
+
+                            let mut variants = BinOp::VARIANTS;
+                            while let [variant, leftover @ ..] = variants {
+                                if variant.binding_power() == first
+                                    $(&& !matches!(variant, BinOp::$bin_op))+
+                                {
+                                    panic!("missing variants with similar binding power")
+                                }
+
+                                variants = leftover;
+                            }
+
+                            first
+                        }),
+                        select! {
+                            $(Token::$token => BinOp::$bin_op),+
+                        },
+                        |a, bin_op, c, _| {
+                            Expr::BinOp(bin_op, Box::new((a, c)))
+                        }
+                    )
+                };
+            }
+
+            let expr = atom.pratt((
+                // function calls have greater binding power than anything
+                postfix(
+                    const { UnOp::BINDING_POWER + 1 },
+                    list_parser.in_parens(),
+                    |func, args, _| {
+                        Expr::Call(Box::new(func), args)
+                    }
+                ),
+
+                // then go the unary ops
+                prefix(
+                    UnOp::BINDING_POWER,
+                    select! {
+                        Token::Star => UnOp::Deref,
+                        Token::Not => UnOp::Not,
+                        Token::Minus => UnOp::Neg,
+                    },
+                    |un_op, expr, _| Expr::UnOp(un_op, Box::new(expr))
+                ),
+
+                // then the binary operators
+                make_bin_op_grouping!(
+                    Mul = Star
+                    | Div = Slash
+                    | Rem = Percent
+                    | EMod = EMod
+                    | EDiv = EDiv
+                ),
+                make_bin_op_grouping!(
+                    Add = Plus
+                    | Sub = Minus
+                ),
+                make_bin_op_grouping!(
+                    Shr = Shr
+                    | Shl = Shl
+                ),
+
+                make_bin_op_grouping!(BitAnd = And),
+                make_bin_op_grouping!(BitOr = Or),
+                make_bin_op_grouping!(BitXor = Caret),
+
+
+                make_bin_op_grouping!(
+                    Eq = Equality
+                    | Lt = Lt
+                    | Le = Le
+                    | Ne = Ne
+                    | Ge = Ge
+                    | Gt = Gt
+                ),
+
+                make_bin_op_grouping!(LogicalAnd = LogicalAnd),
+                make_bin_op_grouping!(LogicalAnd = LogicalOr),
+
+                // last but not least we have assignments
+                infix(
+                    right(const { BinOp::MIN_BINDING_POWER - 1 }),
+                    select! {
+                        Token::Assign => AssignOp::Simple,
+                        Token::AddAssign => AssignOp::Add,
+                    },
+                    |a, assign, c, _| {
+                        Expr::Assignment(assign, Box::new((a, c)))
+                    }
+                )
+            ));
+
+
+            expr
+        })
+    }
+}
+
 impl ParseAst for Expr {
-    fn parse_inner<'src>(parser: &mut Parser<'src, '_, '_>) -> crate::compile::error::Result<'src, Self> {
-        parse_expr(parser)
+    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        recursive_parsers().expr
     }
 }
-
-fn parse_expr<'src>(parser: &mut Parser<'src, '_, '_>) -> crate::compile::error::Result<'src, Expr> {
-    // Parse the left-hand side expression (starting with unary operators or primary expressions)
-    let lhs = parse_unary(parser)?;
-
-    // Now handle assignments, which are right-associative and have the lowest precedence
-    if let Some(assign_op) = parse_assign_op(parser) {
-        // After assignment operator, parse the right-hand side expression
-        let rhs = parse_expr(parser)?;
-        return Ok(Expr::Assignment(assign_op, Box::new((lhs, rhs))));
-    }
-
-    // If no assignment, parse binary expressions with min precedence 1
-    parse_binary(parser, 1)
-}
-
-fn parse_assign_op<'src>(parser: &mut Parser<'src, '_, '_>) -> Option<AssignOp> {
-    let token = parser.peek()?;
-    let span = token.span();
-    let kind = match token.kind() {
-        TokenTreeKind::Assign => AssignOpKind::Simple,
-        TokenTreeKind::AddAssign => AssignOpKind::Add,
-        _ => return None,
-    };
-    parser.next();
-    Some(AssignOp { span, assign_op_kind: kind })
-}
-
-
-fn parse_binary<'src>(parser: &mut Parser<'src, '_, '_>, min_prec: u8) -> crate::compile::error::Result<'src, Expr> {
-    let mut lhs = parse_unary(parser)?;
-
-    while let Some(bin_op) = parse_bin_op(parser) {
-        let prec = bin_op.precedence();
-        if prec < min_prec {
-            break;
-        }
-        let rhs = parse_binary(parser, prec + 1)?;
-        lhs = Expr::BinOp(bin_op, Box::new((lhs, rhs)));
-    }
-
-    Ok(lhs)
-}
-
-
-fn parse_bin_op<'src>(parser: &mut Parser<'src, '_, '_>) -> Option<BinOp> {
-    let token = parser.peek()?;
-    let span = token.span();
-    let kind = match token.kind() {
-        TokenTreeKind::Plus => BinOpKind::Add,
-        TokenTreeKind::Minus => BinOpKind::Sub,
-        TokenTreeKind::Star => BinOpKind::Mul,
-        TokenTreeKind::Slash => BinOpKind::Div,
-        TokenTreeKind::Percent => BinOpKind::Rem,
-        TokenTreeKind::EDiv => BinOpKind::EDiv,
-        TokenTreeKind::EMod => BinOpKind::EMod,
-        TokenTreeKind::LogicalAnd => BinOpKind::LogicalAnd,
-        TokenTreeKind::LogicalOr => BinOpKind::LogicalOr,
-        TokenTreeKind::Caret => BinOpKind::BitXor,
-        TokenTreeKind::And => BinOpKind::BitAnd,
-        TokenTreeKind::Or => BinOpKind::BitOr,
-        TokenTreeKind::Shl => BinOpKind::Shl,
-        TokenTreeKind::Shr => BinOpKind::Shr,
-        TokenTreeKind::Equality => BinOpKind::Eq,
-        TokenTreeKind::Lt => BinOpKind::Lt,
-        TokenTreeKind::Le => BinOpKind::Le,
-        TokenTreeKind::Ne => BinOpKind::Ne,
-        TokenTreeKind::Ge => BinOpKind::Ge,
-        TokenTreeKind::Gt => BinOpKind::Gt,
-        _ => return None,
-    };
-    parser.next();
-    Some(BinOp { kind, span })
-}
-
-fn parse_unary<'src>(parser: &mut Parser<'src, '_, '_>) -> crate::compile::error::Result<'src, Expr> {
-    let token = parser.peek();
-    let op = match token.map(|t| t.kind()) {
-        Some(TokenTreeKind::Star) => Some(UnOp::Deref),
-        Some(TokenTreeKind::Not) => Some(UnOp::Not),
-        Some(TokenTreeKind::Minus) => Some(UnOp::Neg),
-        _ => None,
-    };
-
-    if let Some(op) = op {
-        parser.next();
-        let expr = parse_unary(parser)?;
-        return Ok(Expr::Unary(op, Box::new(expr)));
-    }
-
-    parse_primary(parser)
-}
-
-fn parse_primary<'src>(parser: &mut Parser<'src, '_, '_>) -> crate::compile::error::Result<'src, Expr> {
-    let token = parser.peek();
-    match token.map(|t| t.kind()) {
-        Some(TokenTreeKind::Ident | TokenTreeKind::DoubleColon) => {
-            let path = parser.parse::<Path>()?;
-            Ok(Expr::Path(path))
-        }
-        Some(&TokenTreeKind::Literal(lit)) => {
-            let token = parser.next().unwrap();
-            Ok(Expr::Literal(lit, token.span()))
-        }
-        Some(TokenTreeKind::Paren(paren)) => {
-            let mut sub_parser = parser.sub_parser(paren);
-            let expressions = sub_parser.parse_list::<Expr, Tuple>(TokenKind::Comma)?;
-            Ok(match expressions {
-                TupleOrParens::Parens(x) => Expr::Parens(Box::new(x)),
-                TupleOrParens::Tuple(tuple) => Expr::Tuple(tuple)
-            })
-        }
-        Some(TokenTreeKind::Bracket(_)) => {
-            let block = parser.parse::<Block>()?;
-            Ok(Expr::Block(block))
-        }
-        Some(TokenTreeKind::Loop) => {
-            parser.next();
-            let block = parser.parse::<Block>()?;
-            Ok(Expr::Loop(block))
-        }
-        _ => Err(parser.syntax_error(SyntaxError::custom(token.map(|t| t.span()), "expected expression")))
-    }
-}
-

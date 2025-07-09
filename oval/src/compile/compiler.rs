@@ -4,7 +4,7 @@ use thiserror::Error;
 use crate::compile::error::Result;
 use crate::compile::interner;
 use crate::compile::interner::Interner;
-use crate::compile::parser::{ParseAst, Parser};
+use crate::compile::parser::parse_from_source;
 use crate::compile::source_file::SourceFile;
 use crate::symbol::{Path, Symbol};
 
@@ -23,11 +23,12 @@ impl Compiler {
         }
     }
 
-
+    #[must_use]
     pub fn intern(&mut self, str: &str) -> interner::Symbol {
         self.interner.intern(str)
     }
 
+    #[must_use]
     pub fn resolve<S: Symbol>(&self, symbol: &S) -> &str {
         self.interner.resolve(symbol.symbol())
     }
@@ -35,14 +36,11 @@ impl Compiler {
 
     pub fn register_path(&mut self, path: &str) -> Result<Path, InvalidPath> {
         let file = SourceFile::new(0, Path::invalid(), path.to_owned());
-        let stream = file
+        let tokenized = file
             .tokenize()
-            .into_stream()
             .map_err(|_| InvalidPath(()))?;
 
-        let mut parser = Parser::new(self, &stream);
-        let path = Path::parse_inner(&mut parser).map_err(|_| InvalidPath(()))?;
-        parser.hit_eos().then_some(path).ok_or(InvalidPath(()))
+        parse_from_source::<Path>(tokenized, self).map_err(|_| InvalidPath(()))
     }
 }
 

@@ -127,6 +127,7 @@ dependencies = [
  "cow-array",
  "eyre",
  "hashbrown",
+ "once_cell",
  "paste",
  "string-interner",
  "thin-vec",

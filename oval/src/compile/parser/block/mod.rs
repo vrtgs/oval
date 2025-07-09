@@ -1,10 +1,12 @@
 use alloc::vec::Vec;
 use alloc::vec;
-use crate::compile::parser::{Item, ParseAst, Parser};
+use chumsky::input::ValueInput;
+use chumsky::prelude::SimpleSpan;
+use crate::compile::parser::{recursive_parsers, OvalParserExt, ParseAst, Parser, ParserExtra};
 use crate::compile::parser::block::expr::Expr;
+use crate::compile::parser::item::Item;
 use crate::compile::parser::r#type::Type;
-use crate::compile::span::SimpleSpan;
-use crate::compile::tokenizer::{TokenKind, TokenTreeKind};
+use crate::compile::tokenizer::Token;
 use crate::symbol::{Ident};
 
 
@@ -28,8 +30,8 @@ pub enum Statement {
 }
 
 impl ParseAst for Statement {
-    fn parse_inner<'src>(_: &mut Parser<'src, '_, '_>) -> crate::compile::error::Result<'src, Self> {
-        todo!()
+    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        chumsky::primitive::todo()
     }
 }
 
@@ -40,19 +42,22 @@ pub struct Block {
     span: SimpleSpan,
 }
 
+impl Block {
+    pub(crate) fn make_parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>(
+        expr_parser: impl Parser<'a, I, Expr, ParserExtra<'a>> + Clone,
+    ) -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        expr_parser.in_curly_brackets().map_with(|expr, extra| {
+            Self {
+                statements: vec![Statement::Expr { expr, terminated: false }],
+                span: extra.span(),
+            }
+        })
+    }
+}
+
 
 impl ParseAst for Block {
-    fn parse_inner<'src>(parser: &mut Parser<'src, '_, '_>) -> crate::compile::error::Result<'src, Self> {
-        let TokenTreeKind::Bracket(bracket) = parser.eat(TokenKind::RBracket)?.kind() else {
-            unreachable!()
-        };
-
-        let mut parser = parser.sub_parser(bracket);
-        let expr = parser.parse::<Expr>()?;
-        parser.assert_eos()?;
-        Ok(Self {
-            statements: vec![Statement::Expr { expr, terminated: false }],
-            span: SimpleSpan::EMPTY,
-        })
+    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        recursive_parsers().block
     }
 }
