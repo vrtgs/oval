@@ -1,4 +1,4 @@
-use alloc::string::String;
+use alloc::borrow::Cow;
 use core::fmt::{Debug, Formatter};
 use crate::compile::tokenizer::TokenizedSource;
 use crate::symbol::Path;
@@ -8,13 +8,13 @@ use crate::compile::error::Result;
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct SourceId(pub(crate) usize);
 
-pub struct SourceFile {
+pub struct SourceFile<'a> {
     id: SourceId,
     module: Path,
-    contents: String,
+    contents: Cow<'a, str>
 }
 
-impl Debug for SourceFile {
+impl Debug for SourceFile<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SourceFile")
             .field("id", &self.id)
@@ -23,12 +23,12 @@ impl Debug for SourceFile {
     }
 }
 
-impl SourceFile {
-    pub(crate) fn new(id: usize, module: Path, contents: String) -> Self {
+impl<'a> SourceFile<'a> {
+    pub(crate) fn new(id: usize, module: Path, contents: impl Into<Cow<'a, str>>) -> Self {
         Self {
             id: SourceId(id),
             module,
-            contents
+            contents: contents.into()
         }
     }
     
@@ -51,7 +51,7 @@ impl SourceFile {
 }
 
 
-impl AsRef<str> for SourceFile {
+impl AsRef<str> for SourceFile<'_> {
     fn as_ref(&self) -> &str {
         self.contents()
     }

@@ -9,7 +9,7 @@ pub mod compiler;
 pub mod interner;
 
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Spanned<T, S = SimpleSpan> {
     pub span: S,
     pub value: T

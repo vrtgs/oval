@@ -1,11 +1,11 @@
 use core::fmt::{Debug, Formatter};
-use string_interner::backend::StringBackend;
+use string_interner::backend::BufferBackend;
 use string_interner::StringInterner;
 use string_interner::symbol::SymbolUsize;
 
 pub type Symbol = SymbolUsize;
 
-pub(crate) struct Interner(StringInterner<StringBackend<Symbol>>);
+pub(crate) struct Interner(StringInterner<BufferBackend<Symbol>>);
 
 impl Interner {
     pub fn new() -> Self {

@@ -1,12 +1,11 @@
 use core::fmt::{Debug, Formatter};
-use alloc::borrow::ToOwned;
 use thiserror::Error;
 use crate::compile::error::Result;
 use crate::compile::interner;
 use crate::compile::interner::Interner;
-use crate::compile::parser::parse_from_source;
+use crate::compile::parser::parse;
 use crate::compile::source_file::SourceFile;
-use crate::symbol::{Path, Symbol};
+use crate::symbol::{Ident, Path, Symbol};
 
 pub struct Compiler {
     pub(crate) interner: Interner
@@ -15,6 +14,10 @@ pub struct Compiler {
 #[derive(Debug, Error)]
 #[error("invalid path, failed to parse")]
 pub struct InvalidPath(());
+
+#[derive(Debug, Error)]
+#[error("invalid identifier, failed to parse")]
+pub struct InvalidIdent(());
 
 impl Compiler {
     pub fn new() -> Self {
@@ -35,12 +38,21 @@ impl Compiler {
 
 
     pub fn register_path(&mut self, path: &str) -> Result<Path, InvalidPath> {
-        let file = SourceFile::new(0, Path::invalid(), path.to_owned());
+        let file = SourceFile::new(0, Path::invalid(), path);
         let tokenized = file
             .tokenize()
             .map_err(|_| InvalidPath(()))?;
 
-        parse_from_source::<Path>(tokenized, self).map_err(|_| InvalidPath(()))
+        parse::<Path>(tokenized, self).map_err(|_| InvalidPath(()))
+    }
+
+    pub fn register_ident(&mut self, ident: &str) -> Result<Ident, InvalidPath> {
+        let file = SourceFile::new(0, Path::invalid(), ident);
+        let tokenized = file
+            .tokenize()
+            .map_err(|_| InvalidPath(()))?;
+
+        parse::<Ident>(tokenized, self).map_err(|_| InvalidPath(()))
     }
 }
 

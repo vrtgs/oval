@@ -9,10 +9,10 @@ use crate::compile::compiler::Compiler;
 use crate::compile::source_file::{SourceFile, SourceId};
 use crate::symbol::Path;
 
-pub struct CompileContextBuilder {
+pub struct CompileContextBuilder<'a> {
     module_names: HashMap<Path, usize>,
     collisions: HashSet<Path>,
-    modules: Vec<SourceFile>,
+    modules: Vec<SourceFile<'a>>,
 }
 
 #[derive(Debug, Error)]
@@ -37,7 +37,7 @@ impl Display for ConflictingModules<'_> {
     }
 }
 
-impl CompileContextBuilder {
+impl<'a> CompileContextBuilder<'a> {
     fn add_module_inner<E>(&mut self, module: Path, contents: impl FnOnce() -> Result<String, E>) -> Result<(), E> {
         let id = self.modules.len();
 
@@ -74,7 +74,7 @@ impl CompileContextBuilder {
         self.read_module(module, std::fs::File::open(path)?)
     }
 
-    pub fn build(self, compiler: &Compiler) -> Result<SourceMap, ConflictingModules> {
+    pub fn build(self, compiler: &Compiler) -> Result<SourceMap<'a>, ConflictingModules> {
         if !self.collisions.is_empty() {
             return Err(ConflictingModules {
                 compiler,
@@ -89,13 +89,13 @@ impl CompileContextBuilder {
     }
 }
 
-pub struct SourceMap {
+pub struct SourceMap<'a> {
     module_names: HashMap<Path, usize>,
-    modules: Vec<SourceFile>,
+    modules: Vec<SourceFile<'a>>,
 }
 
-impl SourceMap {
-    pub fn builder() -> CompileContextBuilder {
+impl<'a> SourceMap<'a> {
+    pub fn builder() -> CompileContextBuilder<'a> {
         CompileContextBuilder {
             module_names: HashMap::new(),
             collisions: HashSet::new(),

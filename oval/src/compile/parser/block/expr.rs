@@ -6,7 +6,7 @@ use chumsky::pratt::{right, left, postfix, prefix, infix};
 use chumsky::prelude::{just, recursive, SimpleSpan};
 use chumsky::primitive::choice;
 use crate::compile::parser::block::Block;
-use crate::compile::parser::{recursive_parsers, OvalParserExt, ParseAst, Parser, ParserExtra};
+use crate::compile::parser::{make_recursive_parsers, OvalParserExt, SealedParseAst, Parser, ParserExtra};
 use crate::compile::tokenizer::Token;
 use crate::symbol::Path;
 
@@ -121,14 +121,14 @@ impl BinOp {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum LiteralKind {
-    String,
-    Num,
+    String(SimpleSpan),
+    Num(SimpleSpan),
     Bool(bool)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Path(Path),
     Tuple(Vec<Expr>),
@@ -184,8 +184,8 @@ impl Expr {
                 .map(Expr::Array);
 
             let literal = select! {
-                Token::String => LiteralKind::String,
-                Token::Float | Token::Int => LiteralKind::Num,
+                Token::String = e => LiteralKind::String(e.span()),
+                Token::Float | Token::Int = e => LiteralKind::Num(e.span()),
                 Token::True => LiteralKind::Bool(true),
                 Token::False => LiteralKind::Bool(true),
             }.labelled("literal value");
@@ -314,8 +314,8 @@ impl Expr {
     }
 }
 
-impl ParseAst for Expr {
+impl SealedParseAst for Expr {
     fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
-        recursive_parsers().expr
+        make_recursive_parsers().0
     }
 }

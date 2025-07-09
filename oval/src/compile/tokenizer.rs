@@ -119,7 +119,7 @@ macro_rules! make_token {
             chars: Chars<'a>
         }
 
-        enum TokenizerError {
+        pub(crate) enum TokenizerError {
             Unknown(char),
             Unterminated { name: &'static str }
         }
@@ -491,7 +491,7 @@ make_token! {
 
 #[derive(Copy, Clone)]
 pub struct TokenView<'src> {
-    source: &'src SourceFile,
+    source: &'src SourceFile<'src>,
     token: Spanned<Token>,
 }
 impl<'src> TokenView<'src> {
@@ -519,13 +519,13 @@ impl<'src> Debug for TokenView<'src> {
 }
 
 pub struct TokenizedSource<'a> {
-    source: &'a SourceFile,
+    source: &'a SourceFile<'a>,
     tokens: CowArray<Spanned<Token>>,
 }
 
 
 impl<'a> TokenizedSource<'a> {
-    pub(crate) fn new(source: &'a SourceFile) -> crate::compile::error::Result<'a, Self> {
+    pub(crate) fn new(source: &'a SourceFile<'a>) -> crate::compile::error::Result<'a, Self> {
         Ok(Self {
             source,
             tokens: CowArray::from_vec(
@@ -537,7 +537,7 @@ impl<'a> TokenizedSource<'a> {
         })
     }
 
-    pub fn source(&self) -> &'a SourceFile {
+    pub fn source(&self) -> &'a SourceFile<'a> {
         &self.source
     }
     

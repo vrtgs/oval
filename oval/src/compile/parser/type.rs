@@ -5,13 +5,13 @@ use chumsky::{IterParser, Parser};
 use chumsky::prelude::{just, SimpleSpan};
 use chumsky::primitive::choice;
 use chumsky::recursive::recursive;
-use crate::compile::parser::{OvalParserExt, ParseAst, ParserExtra};
+use crate::compile::parser::{OvalParserExt, SealedParseAst, ParserExtra};
 use crate::compile::tokenizer::Token;
 use crate::symbol::Path;
 
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Type {
     Tuple(Vec<Type>),
     Parens(Box<Type>),
@@ -20,7 +20,7 @@ pub enum Type {
     Infer,
 }
 
-impl ParseAst for Type {
+impl SealedParseAst for Type {
     fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
         recursive(|type_parser| {
             let tuple_parser = type_parser

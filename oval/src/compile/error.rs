@@ -16,7 +16,7 @@ use crate::compile::tokenizer::Token;
 
 pub(crate) enum ErrorKind<'a> {
     Syntax {
-        source: &'a SourceFile,
+        source: &'a SourceFile<'a>,
         errors: Vec<Rich<'static, Token, SimpleSpan>>
     },
 }
@@ -71,7 +71,7 @@ impl<'a> Error<'a> {
 pub type Result<'a, T, E = Error<'a>> = core::result::Result<T, E>;
 
 pub struct ErrorCache<'a> {
-    source_map: &'a SourceMap,
+    source_map: &'a SourceMap<'a>,
     cache: Option<HashMap<usize, Source<&'a str>>>
 }
 
