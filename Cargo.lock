@@ -129,6 +129,7 @@ dependencies = [
  "hashbrown",
  "once_cell",
  "paste",
+ "stacker",
  "string-interner",
  "thin-vec",
  "thiserror",

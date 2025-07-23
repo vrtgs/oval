@@ -1,9 +1,9 @@
 use crate::compile::hir::scoped::{Definition, LookupFailure, Scope};
+use crate::compile::interner::Interner;
 use crate::compile::syntax;
 use crate::symbol::Path;
 use alloc::rc::Rc;
 use alloc::vec::Vec;
-use crate::compile::interner::Interner;
 
 pub struct FunctionSignature {
     arguments: Vec<Type>,

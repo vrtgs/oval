@@ -1,10 +1,10 @@
-use core::fmt::{Debug, Formatter};
 use crate::compile::syntax::parse_str;
 use crate::symbol::{Ident, Path, SymbolLike};
-use thiserror::Error;
+use core::fmt::{Debug, Formatter};
 use string_interner::StringInterner;
 use string_interner::backend::BucketBackend;
 use string_interner::symbol::SymbolUsize;
+use thiserror::Error;
 
 pub type Symbol = SymbolUsize;
 
@@ -37,9 +37,7 @@ pub struct Interner(InternerInner);
 
 impl Debug for Interner {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f
-            .debug_struct("Interner")
-            .finish_non_exhaustive()
+        f.debug_struct("Interner").finish_non_exhaustive()
     }
 }
 

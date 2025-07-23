@@ -1,11 +1,10 @@
 use crate::compile::Spanned;
 use crate::compile::error::Error;
+use crate::compile::interner::Interner;
 use crate::compile::source::{Source, SourceId};
-use crate::compile::syntax::block::Block;
-use crate::compile::syntax::block::expr::Expr;
-use crate::compile::syntax::item::{ConstItem, FunctionItem, Item};
+use crate::compile::syntax::item::Item;
 use crate::compile::syntax::sealed::SealedParseAst;
-use crate::compile::tokenizer::{tokenize, Token, TokenizedSource};
+use crate::compile::tokenizer::{Token, TokenizedSource, tokenize};
 use crate::symbol::{Ident, Path};
 use alloc::vec::Vec;
 use chumsky::combinator::{DelimitedBy, MapWith};
@@ -14,11 +13,9 @@ use chumsky::extra::SimpleState;
 use chumsky::input::{Input, MapExtra};
 use chumsky::prelude::just;
 use chumsky::primitive::Just;
-use chumsky::recursive::Recursive;
 use chumsky::span::SimpleSpan;
-use chumsky::{IterParser, Parser};
 use chumsky::util::IntoMaybe;
-use crate::compile::interner::Interner;
+use chumsky::{IterParser, Parser};
 
 pub mod block;
 pub mod item;
@@ -68,7 +65,8 @@ impl<
     O,
     P: Parser<'a, I, O, ParserExtra<'a>> + Sized,
 > OvalParserExt<'a, I, O> for P
-{}
+{
+}
 
 pub(crate) mod sealed {
     use crate::compile::Spanned;
@@ -110,44 +108,35 @@ impl SealedParseAst for Pattern {
     }
 }
 
-fn make_recursive_parsers<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>() -> (
-    impl Parser<'a, I, Expr, ParserExtra<'a>> + Clone,
-    impl Parser<'a, I, Block, ParserExtra<'a>> + Clone,
-    impl Parser<'a, I, FunctionItem, ParserExtra<'a>> + Clone,
-    impl Parser<'a, I, ConstItem, ParserExtra<'a>> + Clone,
-    impl Parser<'a, I, Item, ParserExtra<'a>> + Clone,
-) {
-    // this sadly leaks memory
-    let mut block = Recursive::declare();
-    let mut expr = Recursive::declare();
-    let mut func_item = Recursive::declare();
-    let mut const_item = Recursive::declare();
-    let mut item = Recursive::declare();
-
-    expr.define(Expr::make_parser(expr.clone(), block.clone()));
-    func_item.define(FunctionItem::make_parser(block.clone()));
-    const_item.define(ConstItem::make_parser(expr.clone()));
-    block.define(Block::make_parser(expr.clone(), item.clone()));
-    item.define(Item::make_parser(func_item.clone(), const_item.clone()));
-
-    (expr, block, func_item, const_item, item)
+fn recursive_parser<'a, O: ParseAst, I: Input<'a, Token = Token, Span = SimpleSpan>>()
+-> impl Parser<'a, I, O, ParserExtra<'a>> + Copy + Send + Sync + 'a {
+    chumsky::primitive::custom(|inp| {
+        let func = move || inp.parse(O::parser());
+        cfg_if::cfg_if! {
+            if #[cfg(feature = "stacker")] {
+                // at least 128 kib
+                // and if not available grow by 2 mib
+                stacker::maybe_grow(128 * 1024, 2024 * 1024, func)
+            } else {
+                func()
+            }
+        }
+    })
 }
 
-fn parse_inner<'a: 'src, 'src, I: Input<'src, Token=Spanned<Token>>, O: ParseAst>(
+fn parse_inner<'a: 'src, 'src, I: Input<'src, Token = Spanned<Token>>, O: ParseAst>(
     source: &'src Source<'a>,
     input: I,
-    convert: impl Fn(I::MaybeToken) -> (
+    convert: impl Fn(
+        I::MaybeToken,
+    ) -> (
         <I::MaybeToken as IntoMaybe<'src, I::Token>>::Proj<Token>,
         <I::MaybeToken as IntoMaybe<'src, I::Token>>::Proj<SimpleSpan>,
     ) + 'src,
     interner: &'src mut Interner,
 ) -> Result<O, Error<'a>> {
     let contents = source.contents();
-    let tokens = Input::map(
-        input,
-        (contents.len()..contents.len()).into(),
-        convert
-    );
+    let tokens = Input::map(input, (contents.len()..contents.len()).into(), convert);
 
     let mut state: SimpleState<(&Source, &mut Interner)> = SimpleState((source, interner));
 
@@ -157,34 +146,21 @@ fn parse_inner<'a: 'src, 'src, I: Input<'src, Token=Spanned<Token>>, O: ParseAst
         .map_err(move |errors| Error::syntax_error(source.clone(), errors))
 }
 
-
-pub(crate) fn parse_str<O: ParseAst>(
-    source: &str,
-    interner: &mut Interner,
-) -> Option<O> {
-    let source = Source::new(
-        SourceId(0),
-        Path::invalid(),
-        source
-    );
+pub(crate) fn parse_str<O: ParseAst>(source: &str, interner: &mut Interner) -> Option<O> {
+    let source = Source::new(SourceId(0), Path::invalid(), source);
 
     let input = chumsky::input::IterInput::new(
         tokenize(source.contents()).map_while(|maybe_token| {
             let token = Spanned::<Token> {
                 span: maybe_token.span,
-                value: maybe_token.value.ok()?
+                value: maybe_token.value.ok()?,
             };
 
             Some((token, 0..0))
         }),
-        0..0
+        0..0,
     );
-    let res = parse_inner(
-        &source,
-        input,
-        |value| (value.value, value.span),
-        interner
-    );
+    let res = parse_inner(&source, input, |value| (value.value, value.span), interner);
 
     res.ok()
 }
@@ -200,7 +176,6 @@ pub fn parse<'a, O: ParseAst>(
         interner,
     )
 }
-
 
 #[derive(Debug)]
 pub struct OvalFile<'a> {

@@ -1,9 +1,9 @@
-use alloc::borrow::Cow;
 use crate::compile::error::Result;
 use crate::compile::tokenizer::TokenizedSource;
 use crate::symbol::Path;
-use alloc::string::String;
+use alloc::borrow::Cow;
 use alloc::rc::Rc;
+use alloc::string::String;
 use core::fmt::{Debug, Formatter};
 use std::ops::Deref;
 
@@ -22,14 +22,14 @@ pub(crate) enum Contents<'a> {
         depth: usize,
     },
     Borrowed(&'a str),
-    Owned(String)
+    Owned(String),
 }
 
 impl<'a> From<Cow<'a, str>> for Contents<'a> {
     fn from(value: Cow<'a, str>) -> Self {
         match value {
             Cow::Borrowed(str) => Contents::Borrowed(str),
-            Cow::Owned(string) => Contents::Owned(string)
+            Cow::Owned(string) => Contents::Owned(string),
         }
     }
 }
@@ -39,7 +39,12 @@ impl<'a> Deref for Contents<'a> {
 
     fn deref(&self) -> &Self::Target {
         match *self {
-            Contents::InnerModule { ref source, start, end, .. } => {
+            Contents::InnerModule {
+                ref source,
+                start,
+                end,
+                ..
+            } => {
                 unsafe {
                     let root_contents = match source.0.contents {
                         Contents::InnerModule { .. } => core::hint::unreachable_unchecked(),
@@ -50,7 +55,7 @@ impl<'a> Deref for Contents<'a> {
                     // and this was previously checked to be a valid range
                     root_contents.get_unchecked(start..end)
                 }
-            },
+            }
             Contents::Borrowed(str) => str,
             Contents::Owned(ref str) => str,
         }
@@ -80,7 +85,7 @@ impl<'a> Source<'a> {
         Self(Rc::new(SourceInner {
             id,
             module,
-            contents: Contents::from(contents.into())
+            contents: Contents::from(contents.into()),
         }))
     }
 

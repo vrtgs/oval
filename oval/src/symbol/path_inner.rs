@@ -1,14 +1,12 @@
-use core::ptr::NonNull;
-use alloc::sync::Arc;
-use alloc::boxed::Box;
-use alloc::string::String;
-use std::mem::ManuallyDrop;
 use crate::compile::Spanned;
 use crate::compile::interner::Interner;
 use crate::compile::source::Source;
 use crate::symbol::{Ident, Symbol};
-
-
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::sync::Arc;
+use core::ptr::NonNull;
+use std::mem::ManuallyDrop;
 
 pub(super) trait ResolvableIdent {
     type Extra<'a>;
@@ -67,7 +65,6 @@ impl ResolvableIdent for Ident {
     }
 }
 
-
 pub struct PathInner {
     /// this is used as the storage for the symbol
     /// and also used when there is no array of idents
@@ -87,14 +84,15 @@ impl PathInner {
     pub(super) fn construct_inline(ident: Ident) -> Self {
         Self {
             symbol_ident: ident,
-            idents: core::ptr::slice_from_raw_parts(
-                core::ptr::null::<Ident>(),
-                0
-            ),
+            idents: core::ptr::slice_from_raw_parts(core::ptr::null::<Ident>(), 0),
         }
     }
 
-    pub(super) fn construct_alloc<I: ResolvableIdent>(root: bool, symbol: Symbol, idents: &[I]) -> Self {
+    pub(super) fn construct_alloc<I: ResolvableIdent>(
+        root: bool,
+        symbol: Symbol,
+        idents: &[I],
+    ) -> Self {
         assert!(!idents.is_empty());
 
         let symbol_ident = Ident { symbol };
@@ -123,10 +121,9 @@ impl PathInner {
         (self.idents.addr() & 1) != 0
     }
 
-
     pub fn make_root(self, interner: &mut Interner) -> Self {
         if self.is_root() {
-            return self
+            return self;
         }
 
         let previous = interner.resolve(self.symbol());
@@ -144,7 +141,7 @@ impl PathInner {
 
     pub fn make_relative(self, interner: &mut Interner) -> Self {
         if !self.is_root() {
-            return self
+            return self;
         }
 
         let previous = interner.resolve(self.symbol());
@@ -205,8 +202,6 @@ impl PathInner {
     }
 }
 
-
-
 impl Clone for PathInner {
     fn clone(&self) -> Self {
         if let Some(ptr) = self.as_arc_ptr() {
@@ -246,6 +241,5 @@ mod tests {
         assert_eq!(unrooted_foo, foo);
         assert_eq!(interner.resolve(&foo_root), interner.resolve(&rooted_foo));
         assert_eq!(interner.resolve(&unrooted_foo), interner.resolve(&foo));
-
     }
 }

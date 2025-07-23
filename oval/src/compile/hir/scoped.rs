@@ -1,4 +1,5 @@
 use crate::compile::hir::r#type::{FunctionSignature, Type};
+use crate::compile::interner::Interner;
 use crate::compile::syntax::item::Visibility;
 use crate::symbol::{Ident, Path};
 use alloc::borrow::Cow;
@@ -7,7 +8,6 @@ use alloc::vec::Vec;
 use core::cell::RefCell;
 use hashbrown::{HashMap, HashSet};
 use std::vec;
-use crate::compile::interner::Interner;
 
 #[derive(Clone)]
 pub enum Definition {
@@ -109,7 +109,9 @@ impl Scope {
                 LookupPathPrefix::AlreadyRoot(path.clone())
             }
             false => match this.absolute_path() {
-                vec if vec.is_empty() => LookupPathPrefix::AlreadyRoot(path.clone().make_root(interner)),
+                vec if vec.is_empty() => {
+                    LookupPathPrefix::AlreadyRoot(path.clone().make_root(interner))
+                }
                 path => LookupPathPrefix::Constructing(path),
             },
         };

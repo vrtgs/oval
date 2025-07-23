@@ -4,16 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["std"]
+default = ["std", "stacker"]
 std = [
     "string-interner/std",
     "chumsky/default",
     "chumsky/std",
-    "chumsky/stacker",
     "once_cell/std",
     "once_cell/default",
 ]
-binary-build = ["dep:eyre", "std"]
+stacker = ["chumsky/stacker", "dep:stacker"]
+binary-build = ["dep:eyre", "default"]
 
 
 [[bin]]
@@ -32,3 +32,4 @@ paste = "1.0.15"
 thin-vec = "0.2.14"
 chumsky = { version = "0.10.1", default-features = false, features = ["pratt"] }
 once_cell = { version = "1.21.3", default-features = false }
+stacker = { version = "0.1.21", optional = true }

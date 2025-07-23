@@ -1,3 +1,4 @@
+use crate::compile::interner::Interner;
 use crate::compile::source::{Source, SourceId};
 use crate::compile::source_map::SourceMap;
 use crate::compile::tokenizer::Token;
@@ -12,7 +13,6 @@ use core::ops::Range;
 use hashbrown::HashMap;
 use hashbrown::hash_map::Entry;
 use thin_vec::{ThinVec, thin_vec};
-use crate::compile::interner::Interner;
 
 pub(crate) enum ErrorKind<'a> {
     Syntax {
@@ -87,7 +87,10 @@ impl<'a> ErrorCache<'a> {
 impl<'a> Cache<SourceId> for (&mut ErrorCache<'a>, &Interner) {
     type Storage = Source<'a>;
 
-    fn fetch(&mut self, id: &SourceId) -> core::result::Result<&ariadne::Source<Self::Storage>, impl Debug> {
+    fn fetch(
+        &mut self,
+        id: &SourceId,
+    ) -> core::result::Result<&ariadne::Source<Self::Storage>, impl Debug> {
         let (this, _) = self;
         Ok(match this.cache.get_or_insert_default().entry(id.0) {
             Entry::Occupied(entry) => entry.into_mut(),

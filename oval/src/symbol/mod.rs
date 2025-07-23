@@ -1,7 +1,9 @@
+use crate::compile::interner;
+use crate::compile::interner::Interner;
 use crate::compile::syntax::sealed::SealedParseAst;
 use crate::compile::syntax::{OvalParserExt, ParserExtra};
 use crate::compile::tokenizer::Token;
-use crate::compile::interner;
+use crate::symbol::path_inner::{FromFile, PathInner, ResolvableIdent};
 use alloc::string::String;
 use alloc::vec::Vec;
 use chumsky::input::{Input, MapExtra};
@@ -9,10 +11,8 @@ use chumsky::span::SimpleSpan;
 use chumsky::{IterParser, Parser};
 use core::fmt::{Debug, Formatter};
 use core::hash::Hash;
-use string_interner::Symbol as _;
 pub use interner::Symbol;
-use crate::compile::interner::Interner;
-use crate::symbol::path_inner::{FromFile, PathInner, ResolvableIdent};
+use string_interner::Symbol as _;
 
 #[derive(Copy, Clone)]
 #[repr(align(2))]
@@ -79,11 +79,9 @@ impl Path {
 
 impl Path {
     pub(crate) fn invalid() -> Self {
-        Self(PathInner::construct_inline(
-            Ident {
-                symbol: Symbol::try_from_usize(0).unwrap(),
-            }
-        ))
+        Self(PathInner::construct_inline(Ident {
+            symbol: Symbol::try_from_usize(0).unwrap(),
+        }))
     }
 
     fn from_idents_inner<I: ResolvableIdent>(
@@ -133,7 +131,11 @@ impl Path {
             symbol += resolve(ident)
         }
 
-        Path(PathInner::construct_alloc(root, interner.intern(&symbol), idents))
+        Path(PathInner::construct_alloc(
+            root,
+            interner.intern(&symbol),
+            idents,
+        ))
     }
 
     pub fn from_idents(root: bool, idents: &[Ident], interner: &mut Interner) -> Path {
@@ -142,7 +144,8 @@ impl Path {
 }
 
 impl SealedParseAst for Path {
-    fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
         use chumsky::primitive::just;
 
         just(Token::DoubleColon)

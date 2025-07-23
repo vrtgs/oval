@@ -1,3 +1,4 @@
+use crate::compile::interner::Interner;
 use crate::compile::source::{Source, SourceId};
 use crate::symbol::Path;
 use alloc::borrow::Cow;
@@ -11,7 +12,6 @@ use hashbrown::hash_map::Entry;
 use hashbrown::{HashMap, HashSet};
 use std::cell::{Ref, RefCell};
 use thiserror::Error;
-use crate::compile::interner::Interner;
 
 pub struct CompileContextBuilder<'a> {
     module_names: HashMap<Path, SourceId>,
@@ -90,7 +90,10 @@ impl<'a> CompileContextBuilder<'a> {
         self.read_module(module, std::fs::File::open(path)?)
     }
 
-    pub fn build<'c>(self, interner: &'c Interner) -> Result<SourceMap<'a>, ConflictingModules<'c>> {
+    pub fn build<'c>(
+        self,
+        interner: &'c Interner,
+    ) -> Result<SourceMap<'a>, ConflictingModules<'c>> {
         if !self.collisions.is_empty() {
             return Err(ConflictingModules {
                 interner,

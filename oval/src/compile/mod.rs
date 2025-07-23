@@ -1,8 +1,8 @@
 use chumsky::prelude::SimpleSpan;
 
-pub mod interner;
 pub mod error;
 pub mod hir;
+pub mod interner;
 pub mod source;
 pub mod source_map;
 pub mod syntax;
