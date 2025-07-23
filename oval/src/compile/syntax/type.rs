@@ -1,15 +1,13 @@
-use alloc::boxed::Box;
-use alloc::vec::Vec;
-use chumsky::input::ValueInput;
-use chumsky::{IterParser, Parser};
-use chumsky::prelude::{just, SimpleSpan};
-use chumsky::primitive::choice;
-use chumsky::recursive::recursive;
-use crate::compile::parser::{OvalParserExt, SealedParseAst, ParserExtra};
+use crate::compile::syntax::{OvalParserExt, ParserExtra, SealedParseAst};
 use crate::compile::tokenizer::Token;
 use crate::symbol::Path;
-
-
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use chumsky::input::Input;
+use chumsky::prelude::{SimpleSpan, just};
+use chumsky::primitive::choice;
+use chumsky::recursive::recursive;
+use chumsky::{IterParser, Parser};
 
 #[derive(Debug, Clone)]
 pub enum Type {
@@ -21,7 +19,8 @@ pub enum Type {
 }
 
 impl SealedParseAst for Type {
-    fn parser<'a, I: ValueInput<'a, Token=Token, Span=SimpleSpan>>() -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
         recursive(|type_parser| {
             let tuple_parser = type_parser
                 .clone()
@@ -34,7 +33,7 @@ impl SealedParseAst for Type {
                     if !leading {
                         match <[_; 1]>::try_from(types) {
                             Ok([x]) => return Type::Parens(Box::new(x)),
-                            Err(fail) => types = fail
+                            Err(fail) => types = fail,
                         }
                     }
 
@@ -49,7 +48,7 @@ impl SealedParseAst for Type {
                 just(Token::Wildcard).map(|_| Type::Infer),
                 Path::parser().map(Type::Path),
                 tuple_parser,
-                array_parser
+                array_parser,
             ))
         })
     }

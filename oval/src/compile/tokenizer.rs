@@ -1,12 +1,11 @@
-use alloc::vec::Vec;
-use alloc::vec;
-use core::str::Chars;
-use core::fmt::{Debug, Formatter};
-use chumsky::span::SimpleSpan;
-use cow_array::CowArray;
-use crate::compile::source_file::SourceFile;
 use crate::compile::Spanned;
+use crate::compile::source::Source;
+use alloc::vec;
+use alloc::vec::Vec;
 use chumsky::error::Rich;
+use chumsky::span::SimpleSpan;
+use core::fmt::{Debug, Formatter};
+use core::str::Chars;
 
 macro_rules! make_token {
     (enum $enum:ident {
@@ -68,7 +67,7 @@ macro_rules! make_token {
             string_based: { $($str_name = [$($str),+],)* $new_str_name = [$($new_str),+] }
         }
     };
-    
+
     (
         $token:ident,
         acc: {}
@@ -82,21 +81,19 @@ macro_rules! make_token {
                 Ident,
                 String,
                 Char,
-                Float,
-                Int,
+                Number,
                 $([<L $paren_name>], [<R $paren_name>],)*
                 $($kw_name,)*
                 $($str_name,)*
             }
-            
+
             impl $token {
                 pub fn repr(self) -> &'static str {
                     match self {
-                        Self::Ident => "ident",
+                        Self::Ident => "identifier",
                         Self::String => "string literal",
                         Self::Char => "character literal",
-                        Self::Float => "float literal",
-                        Self::Int => "int literal",
+                        Self::Number => "number literal",
                         $(
                         Self::[<L $paren_name>] => concat!($l_paren, ""),
                         Self::[<R $paren_name>] => concat!($r_paren, ""),
@@ -114,6 +111,7 @@ macro_rules! make_token {
             }
         }
 
+        #[derive(Clone)]
         struct Tokens<'a> {
             file: &'a str,
             chars: Chars<'a>
@@ -129,7 +127,7 @@ macro_rules! make_token {
 
             fn next(&mut self) -> Option<Self::Item> {
                 let file_chars = &mut self.chars;
-                
+
                 let offset = self.file.len();
                 let chars_to_offset = |chars: &Chars| offset - chars.as_str().len();
 
@@ -203,7 +201,7 @@ macro_rules! make_token {
                                 $($kw => $token::$kw_name,)*
                                 _ => $token::Ident
                             };
-                            
+
                             make_token(token_ty, &file_chars)
                         }
                         '0'..='9' => {
@@ -219,29 +217,45 @@ macro_rules! make_token {
                                 }
                             }
 
-                            let next_digit = |chars: &mut Chars| {
-                                chars.next().is_some_and(|ch| ch.is_digit(radix))
+
+                            let next_digit_with_radix = |chars: &mut Chars, with_radix: u32| {
+                                chars.next().is_some_and(|ch| ch.is_digit(with_radix))
                             };
+
+                            let next_digit = |chars: &mut Chars| next_digit_with_radix(chars, radix);
 
                             while next_digit(&mut file_chars.clone()) {
                                 file_chars.next();
                             }
 
-                            let mut lit_kind = Token::Int;
                             let mut float_check = file_chars.clone();
-                            // TODO: scientific notation
-                            if radix == 10 && float_check.next() == Some('.') {
-                                if next_digit(&mut float_check) {
-                                    lit_kind = Token::Float;
+                            if float_check.next() == Some('.') {
+                                if next_digit_with_radix(&mut float_check, 10) {
                                     *file_chars = float_check;
 
-                                    while next_digit(&mut file_chars.clone()) {
+                                    while next_digit_with_radix(&mut file_chars.clone(), 10) {
                                         file_chars.next();
                                     }
                                 }
                             }
 
-                            make_token(lit_kind, &file_chars)
+                            // parse exponent
+                            if let Some('e' | 'E') =  file_chars.clone().next() {
+                                file_chars.next();
+                                while let Some('0'..='9') = file_chars.clone().next() {
+                                    file_chars.next();
+                                }
+                            }
+
+                            // parse suffix
+                            if let Some('a'..='z' | 'A'..='Z' | '_') = file_chars.clone().next() {
+                                file_chars.next();
+                                while let Some('a'..='z' | 'A'..='Z' | '0'..='9' | '_') = file_chars.clone().next() {
+                                    file_chars.next();
+                                }
+                            }
+
+                            make_token(Token::Number, &file_chars)
                         }
                         '"' | '\'' => {
                             let mut terminated = false;
@@ -285,7 +299,7 @@ macro_rules! make_token {
                                         };
                                         *file_chars = suffix.chars();
                                         )?
-                                        
+
                                         break 'ret_unknown make_token($token::$str_name, &file_chars);
                                     }
                                 }
@@ -294,10 +308,10 @@ macro_rules! make_token {
                             make_maybe_token(Err(TokenizerError::Unknown(unknown)), &file_chars)
                         }
                     };
-                    
+
                     return Some(token);
                 }
-                
+
                 None
             }
 
@@ -306,18 +320,18 @@ macro_rules! make_token {
             }
         }
 
-        pub(crate) fn tokenize(file: &str) -> impl Iterator<Item=Spanned<Result<$token, TokenizerError>>> {
+        pub(crate) fn tokenize(file: &str) -> impl Iterator<Item=Spanned<Result<$token, TokenizerError>>> + Clone {
             Tokens {
                 file,
                 chars: file.chars()
             }
         }
 
-        fn normalize_tokens<'a>(source: &'a SourceFile, tokens_iter: impl Iterator<Item=Spanned<Result<$token, TokenizerError>>>) -> $crate::compile::error::Result<'a, Vec<Spanned<Token>>> {
-            enum ParenKind { 
+        fn normalize_tokens<'a>(source: Source<'a>, tokens_iter: impl Iterator<Item=Spanned<Result<$token, TokenizerError>>>) -> $crate::compile::error::Result<'a, Vec<Spanned<Token>>> {
+            enum ParenKind {
                 $($paren_name),*
             }
-            
+
             impl ParenKind {
                 fn name(self) -> &'static str {
                     match self {
@@ -413,11 +427,11 @@ macro_rules! make_token {
     };
 }
 
+// TODO: struct token
+
 make_token! {
     enum Token {
         { KW: Let   = "let"   }
-        { KW: Ref   = "ref"   }
-        { KW: Mut   = "mut"   }
         { KW: Fn    = "fn"    }
         { KW: Pub   = "pub"   }
         { KW: Const = "const" }
@@ -425,6 +439,7 @@ make_token! {
         { KW: Else  = "else"  }
         { KW: Loop  = "loop"  }
         { KW: While = "while" }
+        { KW: Use   = "use"   }
         { KW: For   = "for"   }
         { KW: True  = "true"  }
         { KW: False = "false" }
@@ -488,10 +503,9 @@ make_token! {
     }
 }
 
-
 #[derive(Copy, Clone)]
 pub struct TokenView<'src> {
-    source: &'src SourceFile<'src>,
+    source: &'src Source<'src>,
     token: Spanned<Token>,
 }
 impl<'src> TokenView<'src> {
@@ -509,8 +523,7 @@ impl<'src> TokenView<'src> {
 }
 impl<'src> Debug for TokenView<'src> {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f
-            .debug_struct(stringify!( TokenView ))
+        f.debug_struct(stringify!(TokenView))
             .field("span", &self.span())
             .field("token", &self.as_token())
             .field("view", &self.view())
@@ -519,34 +532,30 @@ impl<'src> Debug for TokenView<'src> {
 }
 
 pub struct TokenizedSource<'a> {
-    source: &'a SourceFile<'a>,
-    tokens: CowArray<Spanned<Token>>,
+    source: Source<'a>,
+    tokens: Vec<Spanned<Token>>,
 }
 
-
 impl<'a> TokenizedSource<'a> {
-    pub(crate) fn new(source: &'a SourceFile<'a>) -> crate::compile::error::Result<'a, Self> {
+    pub(crate) fn new(source: Source<'a>) -> crate::compile::error::Result<'a, Self> {
         Ok(Self {
-            source,
-            tokens: CowArray::from_vec(
-                normalize_tokens(
-                    source,
-                    tokenize(source.contents())
-                )?
-            )
+            source: source.clone(),
+            tokens: normalize_tokens(source.clone(), tokenize(source.contents()))?,
         })
     }
 
-    pub fn source(&self) -> &'a SourceFile<'a> {
+    pub fn source(&self) -> &Source<'a> {
         &self.source
     }
-    
-    pub fn tokens(&self) -> impl Iterator<Item=TokenView<'a>> + DoubleEndedIterator + ExactSizeIterator {
-        let source = self.source;
-        self.tokens.iter().map(move |&token| TokenView {
-            source,
-            token,
-        })
+
+    pub fn tokens<'b>(
+        &'b self,
+    ) -> impl Iterator<Item = TokenView<'b>> + DoubleEndedIterator + ExactSizeIterator + use<'a, 'b>
+    {
+        let source = &self.source;
+        self.tokens
+            .iter()
+            .map(move |&token| TokenView { source, token })
     }
 
     pub(crate) fn tokens_slice(&self) -> &[Spanned<Token>] {

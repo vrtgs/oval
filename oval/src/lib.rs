@@ -7,7 +7,7 @@ extern crate std;
 
 // #![deny(missing_docs)]
 
-pub mod symbol;
 pub mod compile;
 pub mod mir;
 pub mod miri;
+pub mod symbol;

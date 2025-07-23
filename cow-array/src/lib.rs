@@ -27,7 +27,6 @@ impl<T, const MIN: usize> MinSizedCowArray<T, MIN> {
         self.0.first_chunk().unwrap()
     }
 
-
     pub fn split_head(&self) -> (&[T; MIN], &[T]) {
         // FIXME: unchecked
         self.0.split_first_chunk().unwrap()
@@ -45,7 +44,7 @@ impl<T, const MIN: usize> MinSizedCowArray<T, MIN> {
 
     pub fn from_vec(vec: Vec<T>) -> Result<Self, Vec<T>> {
         if vec.len() < MIN {
-            return Err(vec)
+            return Err(vec);
         }
 
         // Safety: vec contains at least MIN elements
@@ -57,7 +56,7 @@ impl<T, const MIN: usize> MinSizedCowArray<T, MIN> {
         assert!(vec.len() >= MIN);
         Self(Arc::new(vec))
     }
-    
+
     pub fn get_mut(&mut self) -> Option<MinSizedCowArrayMut<T, MIN>> {
         Arc::get_mut(&mut self.0).map(MinSizedCowArrayMut)
     }
@@ -72,7 +71,7 @@ impl<T: Clone, const MIN: usize> MinSizedCowArray<T, MIN> {
 impl<T: Copy, const MIN: usize> MinSizedCowArray<T, MIN> {
     pub fn copy_from_slice(slice: &[T]) -> Option<Self> {
         if slice.len() < MIN {
-            return None
+            return None;
         }
 
         // Safety: just made sure that slice contains MIN elements
@@ -96,7 +95,7 @@ impl<T: Copy, const MIN: usize> MinSizedCowArray<T, MIN> {
 impl<T: Clone, const MIN: usize> MinSizedCowArray<T, MIN> {
     pub fn clone_from_slice(slice: &[T]) -> Option<Self> {
         if slice.len() < MIN {
-            return None
+            return None;
         }
 
         // Safety: just made sure that slice contains MIN elements
@@ -116,7 +115,6 @@ impl<T: Clone, const MIN: usize> MinSizedCowArray<T, MIN> {
         unsafe { Self::clone_from_slice_unchecked(self) }
     }
 }
-
 
 impl<T, const MIN: usize> Deref for MinSizedCowArray<T, MIN> {
     type Target = [T];
@@ -152,7 +150,7 @@ impl<'a, T, const MIN: usize> MinSizedCowArrayMut<'a, T, MIN> {
         if self.len() <= MIN {
             // FIXME: unchecked
             assert_eq!(self.len(), MIN);
-            return None
+            return None;
         }
 
         self.0.pop()
@@ -190,7 +188,6 @@ impl<T> CowArray<T> {
         // all lengths are >= 0
         Self(unsafe { MinSizedCowArray::from_vec_unchecked(vec) })
     }
-
 
     pub fn get_mut(&mut self) -> Option<CowArrayMut<T>> {
         self.0.get_mut().map(CowArrayMut)
@@ -251,7 +248,7 @@ impl<'a, T> DerefMut for CowArrayMut<'a, T> {
 }
 
 impl<T> FromIterator<T> for CowArray<T> {
-    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         CowArray::from_vec(Vec::from_iter(iter))
     }
 }
@@ -276,40 +273,40 @@ same_impl! {
         fn clone(&self) -> Self {
             Self(self.0.clone())
         }
-        
+
         fn clone_from(&mut self, source: &Self) {
             self.0.clone_from(&source.0)
         }
     }
-    
+
     impl<T: Debug> (Debug) for Cows {
         fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
             <[T] as Debug>::fmt(self, f)
         }
     }
-    
-    
+
+
     impl<T: Hash> (Hash) for Cows {
         fn hash<H: Hasher>(&self, state: &mut H) {
             <[T] as Hash>::hash(self, state)
         }
     }
-   
-    
+
+
     impl<T: PartialEq> (PartialEq) for Cows {
         fn eq(&self, other: &Self) -> bool {
             <[T] as PartialEq>::eq(self, other)
         }
     }
-    
+
     impl<T: Eq> (Eq) for Cows {}
-    
+
     impl<T: PartialOrd> (PartialOrd) for Cows {
         fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
             <[T] as PartialOrd>::partial_cmp(self, other)
         }
     }
-    
+
     impl<T: Ord> (Ord) for Cows {
         fn cmp(&self, other: &Self) -> Ordering {
             <[T] as Ord>::cmp(self, other)
@@ -326,13 +323,12 @@ same_impl! {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     extern crate std;
-    
-    use alloc::vec;
+
     use alloc::string::String;
+    use alloc::vec;
 
     use super::*;
 

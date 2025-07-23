@@ -5,7 +5,14 @@ edition = "2024"
 
 [features]
 default = ["std"]
-std = ["string-interner/std", "chumsky/default", "chumsky/std", "chumsky/stacker", "once_cell/std", "once_cell/default"]
+std = [
+    "string-interner/std",
+    "chumsky/default",
+    "chumsky/std",
+    "chumsky/stacker",
+    "once_cell/std",
+    "once_cell/default",
+]
 binary-build = ["dep:eyre", "std"]
 
 
