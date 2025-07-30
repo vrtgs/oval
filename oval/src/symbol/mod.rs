@@ -25,7 +25,7 @@ mod path_inner;
 
 impl SealedParseAst for Ident {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         use chumsky::primitive;
 
         primitive::just(Token::Ident)
@@ -145,7 +145,7 @@ impl Path {
 
 impl SealedParseAst for Path {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         use chumsky::primitive::just;
 
         just(Token::DoubleColon)

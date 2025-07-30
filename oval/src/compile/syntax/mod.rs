@@ -6,16 +6,18 @@ use crate::compile::syntax::item::Item;
 use crate::compile::syntax::sealed::SealedParseAst;
 use crate::compile::tokenizer::{Token, TokenizedSource, tokenize};
 use crate::symbol::{Ident, Path};
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use chumsky::combinator::{DelimitedBy, MapWith};
 use chumsky::error::Rich;
 use chumsky::extra::SimpleState;
-use chumsky::input::{Input, MapExtra};
+use chumsky::input::{Input, InputRef, MapExtra};
 use chumsky::prelude::just;
 use chumsky::primitive::Just;
 use chumsky::span::SimpleSpan;
 use chumsky::util::IntoMaybe;
 use chumsky::{IterParser, Parser};
+use std::marker::PhantomData;
 
 pub mod block;
 pub mod item;
@@ -30,11 +32,122 @@ pub(crate) type ParserExtra<'a> = chumsky::extra::Full<
 pub(crate) type Delimited<'a, T, I> =
     DelimitedBy<T, Just<Token, I, ParserExtra<'a>>, Just<Token, I, ParserExtra<'a>>, Token, Token>;
 
+pub(crate) struct TupleParserInner<P, O, F1, F2, T> {
+    parser: P,
+    parens: F1,
+    tuple: F2,
+    _output_parser: PhantomData<fn(O) -> T>,
+}
+
+impl<P: Clone, O, F1: Clone, F2: Clone, T> Clone for TupleParserInner<P, O, F1, F2, T> {
+    fn clone(&self) -> Self {
+        Self {
+            parser: self.parser.clone(),
+            parens: self.parens.clone(),
+            tuple: self.tuple.clone(),
+            _output_parser: PhantomData,
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.parser.clone_from(&source.parser);
+        self.parens.clone_from(&source.parens);
+        self.tuple.clone_from(&source.tuple);
+    }
+}
+
+impl<P: Copy, O, F1: Copy, F2: Copy, T> Copy for TupleParserInner<P, O, F1, F2, T> {}
+
+trait TupleCall<I, O> {
+    fn call(&self, args: I) -> O;
+}
+
+impl<I, O, F: Fn(I) -> O> TupleCall<I, O> for F {
+    fn call(&self, args: I) -> O {
+        self(args)
+    }
+}
+
+#[derive(Copy, Clone)]
+pub(crate) struct BoxFirst<F>(F);
+
+impl<I, O, F: TupleCall<Box<I>, O>> TupleCall<I, O> for BoxFirst<F> {
+    fn call(&self, args: I) -> O {
+        let args = Box::new(args);
+        self.0.call(args)
+    }
+}
+
+impl<'a, P, O, F1, F2, I, T> chumsky::extension::v1::ExtParser<'a, I, T, ParserExtra<'a>>
+    for TupleParserInner<P, O, F1, F2, T>
+where
+    I: Input<'a, Token = Token, Span = SimpleSpan>,
+    P: Parser<'a, I, O, ParserExtra<'a>>,
+    F1: TupleCall<O, T>,
+    F2: TupleCall<Vec<O>, T>,
+{
+    fn parse(
+        &self,
+        inp: &mut InputRef<'a, '_, I, ParserExtra<'a>>,
+    ) -> Result<T, <ParserExtra<'a> as chumsky::extra::ParserExtra<'a, I>>::Error> {
+        inp.parse(
+            (&self.parser)
+                .separated_by(just(Token::Comma))
+                .collect::<Vec<_>>()
+                .then(just(Token::Comma).or_not())
+                .in_parens(),
+        )
+        .map(move |(mut list, leading)| {
+            if leading.is_none() {
+                match <[O; 1]>::try_from(list) {
+                    Ok([x]) => return self.parens.call(x),
+                    Err(fail) => list = fail,
+                }
+            }
+
+            self.tuple.call(list)
+        })
+    }
+
+    fn check(
+        &self,
+        inp: &mut InputRef<'a, '_, I, ParserExtra<'a>>,
+    ) -> Result<(), <ParserExtra<'a> as chumsky::extra::ParserExtra<'a, I>>::Error> {
+        inp.check(
+            (&self.parser)
+                .separated_by(just(Token::Comma))
+                .allow_trailing()
+                .in_parens(),
+        )
+    }
+}
+
+pub(crate) type TupleParser<P, O, F1, F2, T> =
+    chumsky::extension::v1::Ext<TupleParserInner<P, O, F1, F2, T>>;
+
 pub(crate) trait OvalParserExt<'a, I: Input<'a, Token = Token, Span = SimpleSpan>, O>:
     Parser<'a, I, O, ParserExtra<'a>> + Sized
 {
     fn in_parens(self) -> Delimited<'a, Self, I> {
         self.delimited_by(just(Token::LParen), just(Token::RParen))
+    }
+
+    fn box_or_tuple<T, F1, F2>(
+        self,
+        parens: F1,
+        tuple: F2,
+    ) -> TupleParser<Self, O, BoxFirst<F1>, F2, T>
+    where
+        F1: Fn(Box<O>) -> T + Copy,
+        F2: Fn(Vec<O>) -> T + Copy,
+        Self: Copy,
+    {
+        chumsky::extension::v1::Ext(TupleParserInner {
+            parser: self,
+            parens: BoxFirst(parens),
+            tuple,
+            _output_parser: PhantomData,
+        })
     }
 
     fn in_square_brackets(self) -> Delimited<'a, Self, I> {
@@ -78,12 +191,12 @@ pub(crate) mod sealed {
 
     pub trait SealedParseAst: Sized + 'static {
         fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-        -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone;
+        -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy;
     }
 
     impl<T: SealedParseAst> SealedParseAst for Spanned<T> {
         fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-        -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+        -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
             T::parser().spanned()
         }
     }
@@ -101,7 +214,7 @@ pub enum Pattern {
 
 impl SealedParseAst for Pattern {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         Ident::parser()
             .map(Pattern::Ident)
             .or(just(Token::Wildcard).map(|_| Pattern::Wildcard))
@@ -180,19 +293,19 @@ pub fn parse<'a, O: ParseAst>(
 #[derive(Debug)]
 pub struct OvalFile<'a> {
     pub source: Source<'a>,
-    pub items: Vec<Item>,
+    pub items: Vec<Spanned<Item>>,
 }
 
 pub fn parse_file<'a>(
     tokenized: TokenizedSource<'a>,
     compiler: &mut Interner,
 ) -> Result<OvalFile<'a>, Error<'a>> {
-    struct Items(Vec<Item>);
+    struct Items(Vec<Spanned<Item>>);
 
     impl SealedParseAst for Items {
         fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-        -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
-            Item::parser().repeated().collect().map(Items)
+        -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
+            Item::parser().spanned().repeated().collect().map(Items)
         }
     }
 

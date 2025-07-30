@@ -10,7 +10,7 @@ use std::ops::Deref;
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct SourceId(pub(crate) usize);
 
-pub(crate) enum Contents<'a> {
+enum Contents<'a> {
     #[expect(dead_code)]
     InnerModule {
         // invariants:
@@ -19,6 +19,8 @@ pub(crate) enum Contents<'a> {
         source: Source<'a>,
         start: usize,
         end: usize,
+        // used for debug
+        #[cfg(debug_assertions)]
         depth: usize,
     },
     Borrowed(&'a str),

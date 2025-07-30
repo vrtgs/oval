@@ -13,7 +13,7 @@ use chumsky::IterParser;
 use chumsky::error::Rich;
 use chumsky::input::{Emitter, Input, MapExtra};
 use chumsky::pratt::{infix, left, postfix, prefix, right};
-use chumsky::prelude::{SimpleSpan, just, recursive};
+use chumsky::prelude::{SimpleSpan, just};
 use chumsky::primitive::choice;
 
 #[derive(Debug, Copy, Clone)]
@@ -132,7 +132,8 @@ impl BinOp {
 pub enum LiteralExpr {
     String(Symbol),
     Char(char),
-    Num(SimpleSpan),
+    Int(i128),
+    Float(f64),
     Bool(bool),
 }
 
@@ -305,7 +306,7 @@ fn quoted_parser<'c, 'a: 'state, 'state, I: Input<'a, Token = Token, Span = Simp
 
 impl SealedParseAst for LiteralExpr {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         let string_literal = just(Token::String).validate(|_, extra, emitter| {
             let (str, interner) = quoted_parser(extra, emitter);
             LiteralExpr::String(interner.intern(&str))
@@ -333,8 +334,21 @@ impl SealedParseAst for LiteralExpr {
         });
 
         let number_parser =
-            just(Token::Number).validate(|_, extra: &mut MapExtra<I, ParserExtra<'a>>, _| {
-                LiteralExpr::Num(extra.span())
+            just(Token::Number).validate(|_, extra: &mut MapExtra<I, ParserExtra<'a>>, emitter| {
+                let span = extra.span();
+                let source = extra.state().0.0;
+                let lit = &source.contents()[span.into_range()];
+                lit.parse::<i128>()
+                    .ok()
+                    .map(LiteralExpr::Int)
+                    .or_else(|| lit.parse::<f64>().ok().map(LiteralExpr::Float))
+                    .unwrap_or_else(|| {
+                        emitter.emit(Rich::custom(
+                            span,
+                            "unknown number; TODO parse this better"
+                        ));
+                        LiteralExpr::Int(0)
+                    })
             });
 
         let bool_parser = choice([
@@ -370,131 +384,109 @@ pub enum Expr {
 
 impl SealedParseAst for Expr {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
-        recursive(|expr_parser| {
-            let block_parser = recursive_parser::<Block, I>();
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
+        let expr_parser = recursive_parser::<Expr, I>();
+        let block_parser = recursive_parser::<Block, I>();
 
-            let parens_parser = expr_parser
-                .clone()
-                .separated_by(just(Token::Comma))
-                .collect::<Vec<_>>()
-                .then(just(Token::Comma).or_not().map(|x| x.is_some()))
-                .in_parens()
-                // TODO: tuple parsing with less code duplication
-                .map(|(mut list, leading)| {
-                    if !leading {
-                        match <[_; 1]>::try_from(list) {
-                            Ok([x]) => return Expr::Parens(Box::new(x)),
-                            Err(fail) => list = fail,
-                        }
-                    }
+        let parens_parser = expr_parser.box_or_tuple(Expr::Parens, Expr::Tuple);
 
-                    Expr::Tuple(list)
-                });
+        let list_parser = expr_parser
+            .separated_by(just(Token::Comma))
+            .allow_trailing()
+            .collect::<Vec<Expr>>();
 
-            let list_parser = expr_parser
-                .clone()
-                .separated_by(just(Token::Comma))
-                .allow_trailing()
-                .collect::<Vec<Expr>>();
+        let array = list_parser.in_square_brackets().map(Expr::Array);
 
-            let array = list_parser.clone().in_square_brackets().map(Expr::Array);
+        let atom = choice((
+            Path::parser().map(Expr::Path),
+            LiteralExpr::parser().map(Expr::Literal),
+            just(Token::Loop).ignore_then(block_parser).map(Expr::Loop),
+            just(Token::While)
+                .ignore_then(expr_parser.then(block_parser))
+                .map(|(expr, block)| Expr::While(Box::new(expr), block)),
+            parens_parser,
+            array,
+            block_parser.map(Expr::Block),
+        ));
 
-            let atom = choice((
-                Path::parser().map(Expr::Path),
-                LiteralExpr::parser().map(Expr::Literal),
-                just(Token::Loop)
-                    .ignore_then(block_parser.clone())
-                    .map(Expr::Loop),
-                just(Token::While)
-                    .ignore_then(expr_parser.then(block_parser.clone()))
-                    .map(|(expr, block)| Expr::While(Box::new(expr), block)),
-                parens_parser,
-                array,
-                block_parser.clone().map(Expr::Block),
-            ));
-
-            macro_rules! make_bin_op_grouping {
-                ($($bin_op:ident = $token: ident)|+) => {
-                    // last but not least we have assignments
-                    chumsky::pratt::infix(
-                        left(const {
-                            let binding_powers = [$(BinOp::$bin_op.binding_power()),+];
-                            let [first, rest @ ..] = binding_powers;
-                            let mut rest = rest.as_slice();
-
-                            while let [additional, leftover @ ..] = rest {
-                                assert!(*additional == first, "mismatched binding power");
-                                rest = leftover;
-                            }
-
-                            let mut variants = BinOp::VARIANTS;
-                            while let [variant, leftover @ ..] = variants {
-                                if variant.binding_power() == first
-                                    $(&& !matches!(variant, BinOp::$bin_op))+
-                                {
-                                    panic!("missing variants with similar binding power")
-                                }
-
-                                variants = leftover;
-                            }
-
-                            first
-                        }),
-                        choice([
-                            $(just(Token::$token).to(BinOp::$bin_op)),+
-                        ]),
-                        |a, bin_op, c, _| {
-                            Expr::BinOp(bin_op, Box::new((a, c)))
-                        }
-                    )
-                };
-            }
-
-            let expr = atom.pratt((
-                // function calls have greater binding power than anything
-                postfix(
-                    const { UnOp::BINDING_POWER + 1 },
-                    list_parser.in_parens(),
-                    |func, args, _| Expr::Call(Box::new(func), args),
-                ),
-                // then go the unary ops
-                prefix(
-                    UnOp::BINDING_POWER,
-                    choice([
-                        just(Token::Star).to(UnOp::Deref),
-                        just(Token::And).to(UnOp::Ref),
-                        just(Token::Not).to(UnOp::Not),
-                        just(Token::Minus).to(UnOp::Neg),
-                    ]),
-                    |un_op, expr, _| Expr::UnOp(un_op, Box::new(expr)),
-                ),
-                // then the binary operators
-                make_bin_op_grouping!(
-                    Mul = Star | Div = Slash | Rem = Percent | EMod = EMod | EDiv = EDiv
-                ),
-                make_bin_op_grouping!(Add = Plus | Sub = Minus),
-                make_bin_op_grouping!(Shr = Shr | Shl = Shl),
-                make_bin_op_grouping!(BitAnd = And),
-                make_bin_op_grouping!(BitOr = Or),
-                make_bin_op_grouping!(BitXor = Caret),
-                make_bin_op_grouping!(
-                    Eq = Equality | Lt = Lt | Le = Le | Ne = Ne | Ge = Ge | Gt = Gt
-                ),
-                make_bin_op_grouping!(LogicalAnd = LogicalAnd),
-                make_bin_op_grouping!(LogicalAnd = LogicalOr),
+        macro_rules! make_bin_op_grouping {
+            ($($bin_op:ident = $token: ident)|+) => {
                 // last but not least we have assignments
-                infix(
-                    right(const { BinOp::MIN_BINDING_POWER - 1 }),
-                    choice([
-                        just(Token::Assign).to(AssignOp::Simple),
-                        just(Token::AddAssign).to(AssignOp::Add),
-                    ]),
-                    |a, assign, c, _| Expr::Assignment(assign, Box::new((a, c))),
-                ),
-            ));
+                chumsky::pratt::infix(
+                    left(const {
+                        let binding_powers = [$(BinOp::$bin_op.binding_power()),+];
+                        let [first, rest @ ..] = binding_powers;
+                        let mut rest = rest.as_slice();
 
-            expr.labelled("expression")
-        })
+                        while let [additional, leftover @ ..] = rest {
+                            assert!(*additional == first, "mismatched binding power");
+                            rest = leftover;
+                        }
+
+                        let mut variants = BinOp::VARIANTS;
+                        while let [variant, leftover @ ..] = variants {
+                            if variant.binding_power() == first
+                                $(&& !matches!(variant, BinOp::$bin_op))+
+                            {
+                                panic!("missing variants with similar binding power")
+                            }
+
+                            variants = leftover;
+                        }
+
+                        first
+                    }),
+                    choice([
+                        $(just(Token::$token).to(BinOp::$bin_op)),+
+                    ]),
+                    |a, bin_op, c, _| {
+                        Expr::BinOp(bin_op, Box::new((a, c)))
+                    }
+                )
+            };
+        }
+
+        let expr = atom.pratt((
+            // function calls have greater binding power than anything
+            postfix(
+                const { UnOp::BINDING_POWER + 1 },
+                list_parser.in_parens(),
+                |func, args, _| Expr::Call(Box::new(func), args),
+            ),
+            // then go the unary ops
+            prefix(
+                UnOp::BINDING_POWER,
+                choice([
+                    just(Token::Star).to(UnOp::Deref),
+                    just(Token::And).to(UnOp::Ref),
+                    just(Token::Not).to(UnOp::Not),
+                    just(Token::Minus).to(UnOp::Neg),
+                ]),
+                |un_op, expr, _| Expr::UnOp(un_op, Box::new(expr)),
+            ),
+            // then the binary operators
+            make_bin_op_grouping!(
+                Mul = Star | Div = Slash | Rem = Percent | EMod = EMod | EDiv = EDiv
+            ),
+            make_bin_op_grouping!(Add = Plus | Sub = Minus),
+            make_bin_op_grouping!(Shr = Shr | Shl = Shl),
+            make_bin_op_grouping!(BitAnd = And),
+            make_bin_op_grouping!(BitOr = Or),
+            make_bin_op_grouping!(BitXor = Caret),
+            make_bin_op_grouping!(Eq = Equality | Lt = Lt | Le = Le | Ne = Ne | Ge = Ge | Gt = Gt),
+            make_bin_op_grouping!(LogicalAnd = LogicalAnd),
+            make_bin_op_grouping!(LogicalAnd = LogicalOr),
+            // last but not least we have assignments
+            infix(
+                right(const { BinOp::MIN_BINDING_POWER - 1 }),
+                choice([
+                    just(Token::Assign).to(AssignOp::Simple),
+                    just(Token::AddAssign).to(AssignOp::Add),
+                ]),
+                |a, assign, c, _| Expr::Assignment(assign, Box::new((a, c))),
+            ),
+        ));
+
+        expr.labelled("expression")
     }
 }

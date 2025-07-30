@@ -21,7 +21,7 @@ pub enum Visibility {
 
 impl SealedParseAst for Visibility {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         just(Token::Pub).or_not().map(|tok| match tok {
             Some(_) => Visibility::Public,
             None => Visibility::Private,
@@ -40,7 +40,7 @@ pub struct FunctionItem {
 
 impl SealedParseAst for FunctionItem {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         let arg_parser = Pattern::parser()
             .then_ignore(just(Token::Colon))
             .then(Type::parser())
@@ -82,7 +82,7 @@ pub struct ConstItem {
 
 impl SealedParseAst for ConstItem {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         Visibility::parser()
             .then_ignore(just(Token::Const))
             .then(Pattern::parser())
@@ -108,7 +108,7 @@ pub struct UseItem {
 
 impl SealedParseAst for UseItem {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         Visibility::parser()
             .then(just(Token::Use).ignore_then(Path::parser()))
             .then_ignore(just(Token::SemiColon))
@@ -128,10 +128,10 @@ pub enum Item {
 
 impl SealedParseAst for Item {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         macro_rules! make_item_parser {
             ($($parser: expr => $ty:ident),+ $(,)?) => {{
-                fn _assert_all_parsed() -> () {
+                fn _assert_all_parsed() {
                     fn get<T>() -> T {
                         todo!()
                     }

@@ -31,7 +31,7 @@ pub enum Statement {
 
 impl SealedParseAst for Statement {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         chumsky::primitive::todo()
     }
 }
@@ -43,7 +43,7 @@ pub struct Block {
 
 impl SealedParseAst for Block {
     fn parser<'a, I: Input<'a, Token = Token, Span = SimpleSpan>>()
-    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Clone {
+    -> impl Parser<'a, I, Self, ParserExtra<'a>> + Copy {
         let expr_parser = recursive_parser::<Expr, I>();
         expr_parser.in_curly_brackets().map(|expr| Self {
             statements: vec![Statement::Expr {
