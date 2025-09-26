@@ -23,23 +23,23 @@ impl<T, const MIN: usize> MinSizedCowArray<T, MIN> {
     }
 
     pub fn head(&self) -> &[T; MIN] {
-        // FIXME: unchecked
-        self.0.first_chunk().unwrap()
+        // SAFETY: guaranteed invariant
+        unsafe { self.0.first_chunk().unwrap_unchecked() }
     }
 
     pub fn split_head(&self) -> (&[T; MIN], &[T]) {
-        // FIXME: unchecked
-        self.0.split_first_chunk().unwrap()
+        // SAFETY: guaranteed by invariant
+        unsafe { self.0.split_first_chunk().unwrap_unchecked() }
     }
 
     pub fn tail(&self) -> &[T; MIN] {
-        // FIXME: unchecked
-        self.0.last_chunk().unwrap()
+        // SAFETY: guaranteed invariant
+        unsafe { self.0.last_chunk().unwrap_unchecked() }
     }
 
     pub fn split_tail(&self) -> (&[T], &[T; MIN]) {
-        // FIXME: unchecked
-        self.0.split_last_chunk().unwrap()
+        // SAFETY: guaranteed invariant
+        unsafe { self.0.split_last_chunk().unwrap_unchecked() }
     }
 
     pub fn from_vec(vec: Vec<T>) -> Result<Self, Vec<T>> {
@@ -52,19 +52,12 @@ impl<T, const MIN: usize> MinSizedCowArray<T, MIN> {
     }
 
     pub unsafe fn from_vec_unchecked(vec: Vec<T>) -> Self {
-        // FIXME: unchecked
-        assert!(vec.len() >= MIN);
+        unsafe { core::hint::assert_unchecked(vec.len() >= MIN) }
         Self(Arc::new(vec))
     }
 
-    pub fn get_mut(&mut self) -> Option<MinSizedCowArrayMut<T, MIN>> {
+    pub fn get_mut(&mut self) -> Option<MinSizedCowArrayMut<'_, T, MIN>> {
         Arc::get_mut(&mut self.0).map(MinSizedCowArrayMut)
-    }
-}
-
-impl<T: Clone, const MIN: usize> MinSizedCowArray<T, MIN> {
-    pub fn make_mut(&mut self) -> MinSizedCowArrayMut<T, MIN> {
-        MinSizedCowArrayMut(Arc::make_mut(&mut self.0))
     }
 }
 
@@ -81,18 +74,22 @@ impl<T: Copy, const MIN: usize> MinSizedCowArray<T, MIN> {
     /// # Safety
     /// * `slice` is at least `MIN` in length
     pub unsafe fn copy_from_slice_unchecked(slice: &[T]) -> Self {
-        // FIXME: unchecked
+        unsafe { core::hint::assert_unchecked(slice.len() >= MIN) }
         Self(Arc::new(<[T]>::into_vec(Box::<[T]>::from(slice))))
     }
 
     /// Creates a deep copy of this Cow
     pub fn deep_copy(&self) -> Self {
-        // Safety: Self is always at least MIN in length
+        // Safety: self is always at least MIN in length
         unsafe { Self::copy_from_slice_unchecked(self) }
     }
 }
 
 impl<T: Clone, const MIN: usize> MinSizedCowArray<T, MIN> {
+    pub fn make_mut(&mut self) -> MinSizedCowArrayMut<'_, T, MIN> {
+        MinSizedCowArrayMut(Arc::make_mut(&mut self.0))
+    }
+
     pub fn clone_from_slice(slice: &[T]) -> Option<Self> {
         if slice.len() < MIN {
             return None;
@@ -103,8 +100,8 @@ impl<T: Clone, const MIN: usize> MinSizedCowArray<T, MIN> {
     }
 
     pub unsafe fn clone_from_slice_unchecked(slice: &[T]) -> Self {
-        // FIXME: unchecked
-        assert!(slice.len() >= MIN);
+        unsafe { core::hint::assert_unchecked(slice.len() >= MIN) }
+
         Self(Arc::new(slice.to_vec()))
     }
 
@@ -121,8 +118,9 @@ impl<T, const MIN: usize> Deref for MinSizedCowArray<T, MIN> {
 
     fn deref(&self) -> &Self::Target {
         let slice = &**self.0;
-        // FIXME: unchecked
-        assert!(slice.len() >= MIN);
+        // SAFETY: guaranteed invariant
+        unsafe { core::hint::assert_unchecked(slice.len() >= MIN) }
+
         slice
     }
 }
@@ -147,9 +145,9 @@ impl<'a, T, const MIN: usize> MinSizedCowArrayMut<'a, T, MIN> {
     }
 
     pub fn pop(&mut self) -> Option<T> {
-        if self.len() <= MIN {
-            // FIXME: unchecked
-            assert_eq!(self.len(), MIN);
+        // in MIN == 0; pop is enough to prevent it, don't double check
+        if MIN != 0 && self.len() <= MIN {
+            unsafe { core::hint::assert_unchecked(self.len() == MIN) }
             return None;
         }
 
@@ -189,7 +187,7 @@ impl<T> CowArray<T> {
         Self(unsafe { MinSizedCowArray::from_vec_unchecked(vec) })
     }
 
-    pub fn get_mut(&mut self) -> Option<CowArrayMut<T>> {
+    pub fn get_mut(&mut self) -> Option<CowArrayMut<'_, T>> {
         self.0.get_mut().map(CowArrayMut)
     }
 }

@@ -39,7 +39,7 @@ a contiguous growable array type; written as `[$type]`
 a UTF-8 encoded growable string; written as `str`
 
 ### references
-* immutable (deeply immutable)
+* sync immutable (deeply immutable)
 * mutable
 
 ## Structs
