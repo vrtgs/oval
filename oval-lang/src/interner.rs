@@ -11,6 +11,13 @@ use core::ptr::NonNull;
 use hashbrown::hash_map::EntryRef;
 
 cfg_if! {
+    // the rust core lib guarantees usize::BITS >= 16
+    // and so no need to check 8 bit widths
+    // and there is no need to use a 32 bit integer
+    // to represent an interned string on a 16 bit machine
+    // after all you can't store that many strings,
+    // since the buffer storing all the interned strings
+    // can only hold <= isize::MAX strings (the maximum length of a slice)
     if #[cfg(target_pointer_width = "16")] {
         type InnerSymbol = u16;
     } else {
@@ -109,6 +116,12 @@ pub struct Interner {
     map: HashMap<InternedStr, Symbol>,
 }
 
+// Safety:
+// self.interned contains self references to stable pointers on the heap
+// there is no interior mutability either, and the pointers are never leaked
+unsafe impl Send for Interner {}
+unsafe impl Sync for Interner {}
+
 
 impl Default for Interner {
     fn default() -> Self {
@@ -206,14 +219,15 @@ macro_rules! declare_static_symbols {
                     }
                 }
 
-
+                // this works because the symbols are passed in according to index properly
+                // so the symbol at index 0 is expanded first
                 let interned = vec![
                     $(const { NonNull::from_ref($symbol_name) }),*
                 ];
 
                 #[allow(unused_mut)]
                 let mut map = HashMap::with_capacity_and_hasher(
-                    <[Symbol]>::len(&[ $(Symbol::$symbol_name),* ]),
+                    const { <[Symbol]>::len(&[ $(Symbol::$symbol_name),* ]) },
                     ahash::RandomState::default()
                 );
 
@@ -278,6 +292,8 @@ declare_static_symbols! {
 
     F64 = "f64";
     F32 = "f32";
+
+    WILD_CARD = "_";
 }
 
 impl Interner {
@@ -285,7 +301,7 @@ impl Interner {
         Some(match self.map.entry_ref(str) {
             EntryRef::Occupied(exists) => *exists.get(),
             EntryRef::Vacant(slot) => {
-                // make sure OOM happens before any insertion
+                // make sure that if OOM happens; it happens before insertion
                 self.interned.try_reserve(1).ok()?;
 
                 // checked_add should always succeed,
@@ -294,9 +310,9 @@ impl Interner {
                 // this is fine
 
                 let slot_number = self.interned.len().checked_add(1)?;
-                let slot_numer = InnerSymbol::try_from(slot_number).ok()?;
+                let slot_number = InnerSymbol::try_from(slot_number).ok()?;
                 let symbol = Symbol(
-                    NonZero::new(slot_numer)
+                    NonZero::new(slot_number)
                         .expect("slot_number must be > 1 since it was added to"),
                 );
                 let entry = slot.insert_entry(symbol);
@@ -315,22 +331,35 @@ impl Interner {
             .unwrap_or_else(|| panic!("ran out of symbols"))
     }
 
-    pub fn resolve(&self, symbol: Symbol) -> &str {
+    pub fn try_resolve(&self, symbol: Symbol) -> Option<&str> {
         let idx = symbol_to_usize(symbol.0.get() - 1);
         let ptr = self
             .interned
             .get(idx)
-            .copied()
-            .expect("symbols passed to resolve should come from the same interner");
+            .copied()?;
 
-        // Safety: Box has a stable address, and entries from the map are never removed
+        // Safety:
+        // Box has a stable address, and entries from the map are never removed
         // and the reference lives only as long as self, guaranteeing that the key still exists
-        unsafe { ptr.as_ref() }
+        // statics also have a stable address and those are never dropped/de-allocated
+        let str = unsafe { ptr.as_ref() };
+
+        Some(str)
+    }
+
+
+    pub fn resolve(&self, symbol: Symbol) -> &str {
+        self
+            .try_resolve(symbol)
+            .expect("symbols passed to resolve should come from the same interner")
     }
 }
 
 impl Debug for Interner {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Interner").finish_non_exhaustive()
+        f
+            .debug_struct("Interner")
+            .field("count", &self.interned.len())
+            .finish_non_exhaustive()
     }
 }

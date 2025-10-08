@@ -58,7 +58,7 @@ pub enum IntegerSuffix {
 }
 
 #[derive(Debug, Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
-pub enum IntegerBase {
+pub enum IntegerRadix {
     Binary = 2,
     Octal = 8,
     Decimal = 10,
@@ -68,9 +68,8 @@ pub enum IntegerBase {
 #[derive(Debug, Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
 pub enum LiteralValue {
     Integer {
-        base: IntegerBase,
-        /// sored as an integer formatted as $(0..`base`)+
-        number: Symbol,
+        value: u128,
+        radix: IntegerRadix,
         suffix: Option<IntegerSuffix>,
     },
     /// the symbol is the value of the string literal, with escaping applied
@@ -398,7 +397,13 @@ impl Spanned for Item {
     }
 }
 
+
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Attributes {}
+
 #[derive(Debug)]
 pub struct OvalModule {
+    pub attributes: Vec<Attributes>,
     pub items: Vec<Item>,
 }

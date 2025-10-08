@@ -1,5 +1,5 @@
 [package]
-name = "oval"
+name = "oval-lang"
 version = "0.0.1"
 edition = "2024"
 
@@ -10,12 +10,7 @@ stacker = [
     "dep:stacker",
     "chumsky/stacker"
 ]
-binary-build = ["dep:eyre", "default"]
 
-
-[[bin]]
-name = "oval"
-required-features = ["binary-build"]
 
 [dependencies]
 cfg-if = "1.0.3"
@@ -25,5 +20,4 @@ ahash = { version = "0.8.12", default-features = false, features = ["runtime-rng
 chumsky = { version = "0.11.1", default-features = false, features = ["extension"] }
 ariadne = "0.5.1"
 stacker = { version = "0.1.21", optional = true }
-eyre = { version = "0.6.12", optional = true }
 thiserror = "2.0.16"

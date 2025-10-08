@@ -343,7 +343,11 @@ macro_rules! make_tokens {
                                         _ => TokenKind::Ident
                                     }
                                 },
-                                '0'..='9' => {
+                                first @ '0'..='9' => {
+                                    if first == '0' {
+                                        eat!('x' | 'b' | 'o');
+                                    }
+                                    
                                     eat_while!('0'..='9' | '_');
                                     // e is not allowed to start the suffix
                                     #[allow(non_contiguous_range_endpoints)]

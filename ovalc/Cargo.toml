@@ -1,0 +1,9 @@
+[package]
+name = "ovalc"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+oval-lang = { version = "0.0.1", path = "../oval-lang" }
+eyre = "0.6.12"
+ariadne = "0.5.1"

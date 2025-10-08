@@ -38,10 +38,6 @@ impl ParseResult {
             None => Ok(self.module)
         }
     }
-    
-    pub(crate) fn has_fatal_errors(&self) -> bool {
-        self.errors.as_ref().is_some_and(|errors| errors.has_fatal_errors())
-    }
 }
 
 pub trait ParseOvalModule: ParseOvalModuleSealed {}
@@ -110,7 +106,7 @@ impl ParseOvalModuleSealed for &str {
         }
 
         ParseResult {
-            module: file.unwrap_or(const { OvalModule { items: vec![] } }),
+            module: file.unwrap_or(const { OvalModule { attributes: vec![], items: vec![] } }),
             errors: error,
         }
     }

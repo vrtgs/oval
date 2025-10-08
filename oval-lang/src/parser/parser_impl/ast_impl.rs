@@ -1,6 +1,5 @@
-use alloc::borrow::Cow;
 use alloc::vec;
-use crate::ast::{BinOp, Block, CallExpr, Expr, Function, Item, LetStmt, LiteralExpr, LiteralValue, OvalModule, Stmt, Type, UnOp, UnOpKind, BinOpKind, ConstItem, UnOpExpr, BinOpExpr, CastAsExpr, IndexExpr, LoopExpr, IntegerSuffix, IntegerBase, IfExpr, IfBranch, FunctionSignature};
+use crate::ast::{BinOp, Block, CallExpr, Expr, Function, Item, LetStmt, LiteralExpr, LiteralValue, OvalModule, Stmt, Type, UnOp, UnOpKind, BinOpKind, ConstItem, UnOpExpr, BinOpExpr, CastAsExpr, IndexExpr, LoopExpr, IntegerSuffix, IntegerRadix, IfExpr, IfBranch, FunctionSignature};
 use crate::parser::parser_impl::ext::{OvalParserExt, recursive_parser, recover_nested_delimiters, static_parser, recover_nested_delimiters_extra, static_unsized_parser};
 use crate::parser::{AstParse, InputTape, OvalParser, ParserData, ParserState};
 use crate::tokens::{Arrow, Equals, Colon, Comma, Extern, TokenKind, Fn, Ident, Let, Literal, Mut, Pub, Semicolon, Const, As, Not, Loop, Return, Break, If, Else, CurlyBrace, Token, SquareBracket};
@@ -10,7 +9,6 @@ use chumsky::extra::SimpleState;
 use chumsky::prelude::via_parser;
 use crate::ast::recursive::Recursive;
 use chumsky::primitive::group as parse_group;
-use crate::interner::Interner;
 use crate::parser::parser_impl::{ParserError, Pattern};
 use crate::spanned::Span;
 use crate::tokens::TokenTy;
@@ -26,13 +24,16 @@ macro_rules! impl_suffixes {
         $($suffix: literal $name: ident),+ $(,)?
     ) => {
         match $suffix_expr {
-            "" => None,
+            [] => None,
             $($suffix => Some($suffix_name::$name),)+
             suffix => {
                 $errors.push(ParserError::custom(
                     $span,
                     "unknown integer suffix",
-                    format_args!("unknown integer suffix `{suffix}`")
+                    format_args!(
+                        "unknown integer suffix `{}`",
+                        str::from_utf8(suffix).unwrap()
+                    )
                 ));
                 None
             }
@@ -45,35 +46,45 @@ impl AstParse for LiteralExpr {
         pub fn parse_integer_literal<'src, I: InputTape<'src>, E: ParserError<'src, I>>(
             span: Span,
             number_full: &str,
-            interner: &mut Interner,
             errors: &mut Vec<E>
         ) -> LiteralValue {
-            let mut hit_number_after_hitting_underscore = false;
-            let mut underscore_count = 0;
-            let index = number_full
-                .find(|char: char| match char {
-                    '0'..='9' => {
-                        if underscore_count != 0 {
-                            hit_number_after_hitting_underscore = true;
-                        }
-                        false
-                    },
-                    '_' => {
-                        underscore_count += 1;
-                        false
+            let (number, radix) = match number_full.as_bytes() {
+                [b'0', b'b', rest @ ..] => (rest, IntegerRadix::Binary),
+                [b'0', b'o', rest @ ..] => (rest, IntegerRadix::Octal),
+                [b'0', b'x', rest @ ..] => (rest, IntegerRadix::Hex),
+                number_full => (number_full, IntegerRadix::Decimal),
+            };
+
+            let (suffix, value) = {
+                let mut number = number;
+
+                let mut value = Some(0_u128);
+                while let &[byte, ref rest @ ..] = number
+                    && let Some(digit) = (byte as char).to_digit(radix as u32)
+                {
+                    number = rest;
+
+                    if let Some(old_value) = value
+                        && let Some(shifted_value) = old_value.checked_mul(radix as u128)
+                        && let Some(new_value) = shifted_value.checked_add(digit.into())
+                    {
+                        value = Some(new_value)
+                    } else {
+                        value = None
                     }
-                    _ => true
-                })
-                .unwrap_or(number_full.len());
+                }
 
-            // include the suffix starter with the suffix
-            let (number, suffix) = number_full.split_at(index);
+                let value = value.unwrap_or_else(|| {
+                    errors.push(E::custom(
+                        span,
+                        "integer literal too large",
+                        format_args!("value exceeds limit of `{}`", u128::MAX)
+                    ));
 
-            let number_is_clean = !hit_number_after_hitting_underscore;
+                    u128::MAX
+                });
 
-            let number = match number_is_clean {
-                true => Cow::Borrowed(&number[..number.len()-underscore_count]),
-                false => Cow::Owned(number.replace("_", ""))
+                (number, value)
             };
 
             let suffix = impl_suffixes! {
@@ -83,24 +94,23 @@ impl AstParse for LiteralExpr {
                 span = span;
                 suffix_name = IntegerSuffix;
 
-                "isize" Isize,
-                "i64" I64,
-                "i32" I32,
-                "i16" I16,
-                "i8" I8,
+                b"isize" Isize,
+                b"i64" I64,
+                b"i32" I32,
+                b"i16" I16,
+                b"i8" I8,
 
-                "usize" Usize,
-                "u64" U64,
-                "u32" U32,
-                "u16" U16,
-                "u8" U8,
+                b"usize" Usize,
+                b"u64" U64,
+                b"u32" U32,
+                b"u16" U16,
+                b"u8" U8,
             };
 
-            let symbol = interner.get_or_intern(&number);
             LiteralValue::Integer {
-                base: IntegerBase::Decimal,
-                number: symbol,
-                suffix
+                value,
+                radix,
+                suffix,
             }
         }
 
@@ -116,14 +126,12 @@ impl AstParse for LiteralExpr {
                 let state: &mut ParserState<E::Error> = state;
 
                 let text = state.text;
-                let interner = &mut *state.interner;
                 let literal_str = &text[span.into_range()];
 
                 let value = match literal {
                     Literal::Integer => parse_integer_literal(
                         span,
                         literal_str,
-                        interner,
                         &mut state.produced_errors
                     ),
                     Literal::Bool(bool) => LiteralValue::Bool(bool),
@@ -771,7 +779,10 @@ impl AstParse for OvalModule {
             Item::parser()
                 .repeated()
                 .collect::<Vec<_>>()
-                .map(|items| OvalModule { items })
+                .map(|items| OvalModule {
+                    attributes: vec![],
+                    items
+                })
         }
     }
 }

@@ -27,6 +27,7 @@ impl<T: ?Sized> Recursive<T> {
     pub(crate) const unsafe fn from_ptr(raw: NonNull<T>) -> Self {
         let raw = raw.as_ptr();
         // Safety: box has the same layout as a raw pointer
+        // this is a const hack since Box::from_raw is not const ready
         // https://doc.rust-lang.org/std/boxed/index.html#memory-layout
         let boxed = unsafe { core::mem::transmute::<*mut T, Box<T>>(raw) };
         Self(ManuallyDrop::new(boxed))
@@ -46,6 +47,21 @@ impl<T: ?Sized> Recursive<T> {
     pub fn with_inner<'a, U: 'a>(&'a self, fun: impl FnOnce(&'a T) -> U) -> U {
         let inner = self.get_ref();
         recurse(move || fun(inner))
+    }
+}
+
+impl<T> Recursive<[T]> {
+    pub(crate) const fn empty_slice() -> Self {
+        unsafe {
+            // this slice is zero sized so any sufficiently aligned non-null pointer is a valid object
+            // and is also valid as a box
+            let ptr = NonNull::slice_from_raw_parts(
+                NonNull::dangling(),
+                0
+            );
+
+            Self::from_ptr(ptr)
+        }
     }
 }
 

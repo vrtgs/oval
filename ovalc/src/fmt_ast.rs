@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Display, Formatter, Write};
-use oval::ast::{BinOpExpr, BinOpKind, Block, CallExpr, CastAsExpr, ConstItem, Expr, Function, FunctionSignature, IfBranch, IndexExpr, IntegerBase, IntegerSuffix, Item, LetStmt, LiteralExpr, LiteralValue, OvalModule, Stmt, Type, UnOpExpr, UnOpKind};
-use oval::interner::Interner;
-use oval::tokens::Ident;
-use oval::TokenTy;
+use oval_lang::ast::{BinOpExpr, BinOpKind, Block, CallExpr, CastAsExpr, ConstItem, Expr, Function, FunctionSignature, IfBranch, IndexExpr, IntegerRadix, IntegerSuffix, Item, LetStmt, LiteralExpr, LiteralValue, OvalModule, Stmt, Type, UnOpExpr, UnOpKind};
+use oval_lang::interner::Interner;
+use oval_lang::tokens::Ident;
+use oval_lang::TokenTy;
 
 #[derive(Copy, Clone)]
 struct RecurseData<'a> {
@@ -146,21 +146,16 @@ impl FmtAst for LiteralExpr {
         match self.value {
             LiteralValue::Bool(val) => f.write_str(if val { "true" } else { "false" }),
             LiteralValue::Integer {
-                base,
-                number,
+                radix,
+                value: number,
                 suffix
             } => {
-                'write_base_prefix: {
-                    let prefix = match base {
-                        IntegerBase::Decimal => break 'write_base_prefix,
-                        IntegerBase::Binary => "0b",
-                        IntegerBase::Octal => "0o",
-                        IntegerBase::Hex => "0x",
-                    };
-                    f.write_str(prefix)?
-                }
-
-                f.write_str(data.interner.resolve(number))?;
+                match radix {
+                    IntegerRadix::Decimal => <u128 as Display>::fmt(&number, f),
+                    IntegerRadix::Binary => write!(f, "0b{number:b}"),
+                    IntegerRadix::Octal => write!(f, "0o{number:o}"),
+                    IntegerRadix::Hex => write!(f, "0x{number:x}"),
+                }?;
 
                 if let Some(suffix) = suffix {
                     let suffix = match suffix {
