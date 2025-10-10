@@ -7,6 +7,10 @@ use crate::mir::OvalIR;
 use crate::parser::{ParseErrors, ParseResult};
 use crate::spanned::Span;
 
+mod ast_id;
+mod type_check;
+
+
 enum CompileErrorReason {
 
 }

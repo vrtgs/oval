@@ -51,7 +51,7 @@ impl<T: ?Sized> Recursive<T> {
 }
 
 impl<T> Recursive<[T]> {
-    pub(crate) const fn empty_slice() -> Self {
+    pub const fn empty_slice() -> Self {
         unsafe {
             // this slice is zero sized so any sufficiently aligned non-null pointer is a valid object
             // and is also valid as a box
@@ -114,8 +114,8 @@ impl<T: ?Sized> Drop for Recursive<T> {
 
                 impl<T: ?Sized> Drop for DropGuard<'_, T> {
                     fn drop(&mut self) {
-                        // if the closure NEVER ran
-                        // so if this ran and drop panicked; this is skipped
+                        // this handles the case where the closure is NEVER ran
+                        // so if the closure RAN ran and drop panicked; this is skipped
                         // and that is intended
                         if let Some(alive) = self.0.take() {
                             unsafe { ManuallyDrop::drop(&mut alive.0) }

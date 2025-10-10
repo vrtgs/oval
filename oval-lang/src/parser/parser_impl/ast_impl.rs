@@ -212,7 +212,7 @@ macro_rules! chained_binop_parers {
                         let state: &mut ParserState<_> = state;
                         state.produced_errors.push(ParserError::custom_with_labels(
                             span,
-                            "comparison operators cannot be chained",
+                            concat!(stringify!($group_name), " operators cannot be chained"),
                             [
                                 (
                                     lhs_op_span,
@@ -372,7 +372,7 @@ macro_rules! make_expr_parser {
                 Minus => Sub
             }
 
-            comp: no_chaining {
+            comparison: no_chaining {
                 LessThan => Lt,
                 LessthanOrEqual => Le,
                 GreaterThan => Gt,
@@ -542,7 +542,16 @@ impl AstParse for Block {
                         trailing: semi
                     }
                 }),
-                recursive_parser::<Item, _, _>().map(|item| {
+                recursive_parser::<Item, _, _>().map_with(|item, extra| {
+                    let span: Span = extra.span();
+                    let state: &mut SimpleState<ParserState<E::Error>> = extra.state();
+
+                    state.produced_errors.push(E::Error::custom(
+                        span,
+                        "unsupported stmt",
+                        "item stmts still unsupported"
+                    ));
+
                     Stmt::Item(Recursive::new(item))
                 }),
             ));

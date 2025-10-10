@@ -10,8 +10,7 @@ pub struct Span {
 impl Span {
     #[inline]
     pub const fn new(start: usize, end: usize) -> Self {
-        assert!(start <= end, "degenerate range");
-
+        assert!(start <= end, "degenerate span");
         Self { start, end }
     }
 
@@ -45,16 +44,18 @@ impl Span {
         this.assert_invariants();
         that.assert_invariants();
 
-        // and the smaller start
+        // FIXME(const-hack) use min and max instead
+
+        // get the smaller start
         let start = match this.start < that.start {
             true => this.start,
             false => that.start,
         };
 
-        // get the bigger end
-        let end = match this.end < that.end {
-            true => that.end,
-            false => this.end,
+        // and the bigger end
+        let end = match this.end > that.end {
+            true => this.end,
+            false => that.end,
         };
 
 
@@ -78,7 +79,12 @@ impl Span {
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.assert_invariants();
+        // since span is always a non degenerate range
+        // its only empty if start == end
+        // and there is no need to check
+        // start > end since that is not possible
+        self.start == self.end
     }
 }
 
