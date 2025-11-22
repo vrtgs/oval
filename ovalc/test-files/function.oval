@@ -6,20 +6,27 @@ pub const FOO_FN: fn(a: u16, b: i32, c: i32) -> i32 = foo;
 pub extern fn foo(a: u16, b: i32, c: i32) -> i32 {
     let foo = 3_i8;
     loop {
-     let foo = 3;
-      if foo + 6 > 4 {
-       ()
+        let foo = 3;
+        if foo + 6 > 4 {
+            ()
         } else if 8 < 3 {
-        ()
+            ()
         } else if 8 == 8 {
-        ()
+            ()
         } else if 8 == 7 {
-        ()
+            ()
         } else if false {
-        ()
+            ()
         } else {
-        ()
+           ()
         }
      }
 }
 
+const X: usize = 3;
+const Y: [u8; X] = [3; X];
+const Z: usize = Y[0] as usize;
+
+const fn foo(x: [u8; X]) -> [u8; Z] {
+    x
+}

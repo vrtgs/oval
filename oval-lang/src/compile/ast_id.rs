@@ -1,4 +1,3 @@
-
 #[derive(Copy, Clone, PartialOrd, PartialEq)]
 #[repr(transparent)]
 pub struct AstId {

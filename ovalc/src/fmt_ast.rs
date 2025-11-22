@@ -1,21 +1,24 @@
-use std::fmt::{Debug, Display, Formatter, Write};
-use oval_lang::ast::{BinOpExpr, BinOpKind, Block, CallExpr, CastAsExpr, ConstItem, Expr, Function, FunctionSignature, IfBranch, IndexExpr, IntegerRadix, IntegerSuffix, Item, LetStmt, LiteralExpr, LiteralValue, OvalModule, Stmt, Type, UnOpExpr, UnOpKind};
+use oval_lang::TokenTy;
+use oval_lang::ast::{
+    BinOpExpr, BinOpKind, Block, CallExpr, CastAsExpr, ConstItem, Expr, Function,
+    FunctionSignature, IfBranch, IndexExpr, IntegerRadix, IntegerType, Item, LetStmt, LiteralExpr,
+    LiteralValue, OvalModule, Stmt, Type, UnOpExpr, UnOpKind,
+};
 use oval_lang::interner::Interner;
 use oval_lang::tokens::Ident;
-use oval_lang::TokenTy;
+use std::fmt::{Debug, Display, Formatter, Write};
 
 #[derive(Copy, Clone)]
 struct RecurseData<'a> {
     interner: &'a Interner,
-    depth: u32
+    depth: u32,
 }
 
 impl<'a> RecurseData<'a> {
     pub fn one_deeper(self) -> Self {
         Self {
             interner: self.interner,
-            depth: self.depth.checked_add(1)
-                .expect("that's way too deep")
+            depth: self.depth.checked_add(1).expect("that's way too deep"),
         }
     }
 }
@@ -24,65 +27,54 @@ trait FmtAst {
     fn ast_write<'a>(&'a self, data: RecurseData<'a>, f: &mut Formatter) -> core::fmt::Result;
 
     fn display<'a>(&'a self, data: RecurseData<'a>) -> impl Display + 'a {
-        AstDisplay {
-            ast: self,
-            data
-        }
+        AstDisplay { ast: self, data }
     }
 
     fn display_list_seperated_by<'a>(
         list: &'a [Self],
         data: RecurseData<'a>,
-        seperator: &'static str
+        seperator: &'static str,
     ) -> impl Display + 'a
-    where Self: Sized {
+    where
+        Self: Sized,
+    {
         AstDisplayList {
             list,
             data,
-            seperator
+            seperator,
         }
     }
 
-    fn display_comma_list<'a>(
-        list: &'a [Self],
-        data: RecurseData<'a>
-    ) -> impl Display + 'a
-        where Self: Sized
+    fn display_comma_list<'a>(list: &'a [Self], data: RecurseData<'a>) -> impl Display + 'a
+    where
+        Self: Sized,
     {
-        Self::display_list_seperated_by(
-            list,
-            data,
-            ", "
-        )
+        Self::display_list_seperated_by(list, data, ", ")
     }
 }
 
 struct AstDisplay<'a, T: ?Sized> {
     ast: &'a T,
-    data: RecurseData<'a>
+    data: RecurseData<'a>,
 }
 
 impl<T: ?Sized + FmtAst> Display for AstDisplay<'_, T> {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        T::ast_write(
-            self.ast,
-            self.data,
-            f
-        )
+        T::ast_write(self.ast, self.data, f)
     }
 }
 
 struct AstDisplayList<'a, T> {
     list: &'a [T],
     data: RecurseData<'a>,
-    seperator: &'static str
+    seperator: &'static str,
 }
 
 impl<'a, T: FmtAst> Display for AstDisplayList<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let [head @ .., tail] = self.list else {
-            return Ok(())
+            return Ok(());
         };
 
         for ast in head {
@@ -102,22 +94,21 @@ impl FmtAst for Type {
             Type::Array(array) => array.with_inner(|list| {
                 let (ty, _semicolon, expr) = &list.0;
 
-                write!(f, "[{ty}; {expr}]", ty = ty.display(data), expr = expr.display(data))
+                write!(
+                    f,
+                    "[{ty}; {expr}]",
+                    ty = ty.display(data),
+                    expr = expr.display(data)
+                )
             }),
-            Type::List(list) => list.with_inner(|list| {
-                write!(f, "[{}]", list.0.display(data))
-            }),
-            Type::Parens(paren) => paren.with_inner(|paren| {
-                write!(f, "({})", paren.0.display(data))
-            }),
+            Type::List(list) => list.with_inner(|list| write!(f, "[{}]", list.0.display(data))),
+            Type::Parens(paren) => {
+                paren.with_inner(|paren| write!(f, "({})", paren.0.display(data)))
+            }
             Type::Fn(func) => func.with_inner(|func| {
                 let (_kw_fn, args, ret) = func;
                 let args = args.0.as_slice();
-                write!(
-                    f,
-                    "fn({})",
-                    Type::display_comma_list(args, data)
-                )?;
+                write!(f, "fn({})", Type::display_comma_list(args, data))?;
 
                 if let Some((_arrow, ret)) = ret {
                     write!(f, " -> {}", ret.display(data))?
@@ -148,7 +139,7 @@ impl FmtAst for LiteralExpr {
             LiteralValue::Integer {
                 radix,
                 value: number,
-                suffix
+                suffix,
             } => {
                 match radix {
                     IntegerRadix::Decimal => <u128 as Display>::fmt(&number, f),
@@ -159,26 +150,27 @@ impl FmtAst for LiteralExpr {
 
                 if let Some(suffix) = suffix {
                     let suffix = match suffix {
-                        IntegerSuffix::Usize => "_usize",
-                        IntegerSuffix::U64 => "_u64",
-                        IntegerSuffix::U32 => "_u32",
-                        IntegerSuffix::U16 => "_u16",
-                        IntegerSuffix::U8 => "_u8",
-                        IntegerSuffix::Isize => "_isize",
-                        IntegerSuffix::I64 => "_i64",
-                        IntegerSuffix::I32 => "_i32",
-                        IntegerSuffix::I16 => "_i16",
-                        IntegerSuffix::I8 => "_i8",
+                        IntegerType::Usize => "_usize",
+                        IntegerType::U64 => "_u64",
+                        IntegerType::U32 => "_u32",
+                        IntegerType::U16 => "_u16",
+                        IntegerType::U8 => "_u8",
+                        IntegerType::Isize => "_isize",
+                        IntegerType::I64 => "_i64",
+                        IntegerType::I32 => "_i32",
+                        IntegerType::I16 => "_i16",
+                        IntegerType::I8 => "_i8",
                     };
 
                     f.write_str(suffix)?
                 }
                 Ok(())
-            },
+            }
             LiteralValue::Str(symbol) => {
                 let str_literal = data.interner.resolve(symbol);
                 <str as Debug>::fmt(str_literal, f)
-            },
+            }
+            LiteralValue::Char(chr) => <char as Debug>::fmt(&chr, f),
         }
     }
 }
@@ -189,115 +181,98 @@ impl FmtAst for Expr {
             Expr::Error(_) => f.write_str("<error>"),
             Expr::Literal(lit) => lit.ast_write(data, f),
             Expr::Ident(ident) => f.write_str(data.interner.resolve(ident.symbol())),
-            Expr::BinaryOp(op) => {
-                op.with_inner(move |BinOpExpr { lhs, op, rhs }| {
-                    let op = match op.kind {
-                        BinOpKind::Add => "+",
-                        BinOpKind::Sub => "-",
-                        BinOpKind::Mul => "*",
-                        BinOpKind::Div => "/",
-                        BinOpKind::Rem => "%",
+            Expr::BinaryOp(op) => op.with_inner(move |BinOpExpr { lhs, op, rhs }| {
+                let op = match op.kind {
+                    BinOpKind::Add => "+",
+                    BinOpKind::Sub => "-",
+                    BinOpKind::Mul => "*",
+                    BinOpKind::Div => "/",
+                    BinOpKind::Rem => "%",
 
-                        BinOpKind::Lt => "<",
-                        BinOpKind::Le => "<=",
-                        BinOpKind::Gt => ">",
-                        BinOpKind::Ge => ">=",
+                    BinOpKind::Lt => "<",
+                    BinOpKind::Le => "<=",
+                    BinOpKind::Gt => ">",
+                    BinOpKind::Ge => ">=",
 
-                        BinOpKind::Eq => "==",
-                        BinOpKind::Ne => "!=",
-                    };
+                    BinOpKind::Eq => "==",
+                    BinOpKind::Ne => "!=",
+                };
 
-                    write!(
-                        f,
-                        "{lhs} {op} {rhs}",
-                        lhs = lhs.display(data),
-                        rhs = rhs.display(data)
-                    )
-                })
-            }
-            Expr::UnaryOp(op) => {
-                op.with_inner(move |UnOpExpr { op, expr }| {
-                    let op = match op.kind {
-                        UnOpKind::Not => '!',
-                        UnOpKind::Neg => '-'
-                    };
+                write!(
+                    f,
+                    "{lhs} {op} {rhs}",
+                    lhs = lhs.display(data),
+                    rhs = rhs.display(data)
+                )
+            }),
+            Expr::UnaryOp(op) => op.with_inner(move |UnOpExpr { op, expr }| {
+                let op = match op.kind {
+                    UnOpKind::Not => '!',
+                    UnOpKind::Neg => '-',
+                };
 
-                    f.write_char(op)?;
-                    expr.ast_write(data, f)
-                })
-            }
-            Expr::CastAs(cast) => {
-                cast.with_inner(|CastAsExpr { expr, kw_as: _, ty }| {
-                    write!(f, "{expr} as {ty}", expr = expr.display(data), ty = ty.display(data))
-                })
-            }
-            Expr::Call(call_expr) => {
-                call_expr.with_inner(|CallExpr { callee, args }| {
-                    write!(
-                        f,
-                        "{callee}({args})",
-                        callee = callee.display(data),
-                        args = Expr::display_comma_list(&args.0, data)
-                    )
-                })
-            }
-            Expr::Index(index_expr) => {
-                index_expr.with_inner(|IndexExpr { array, index }| {
-                    write!(
-                        f,
-                        "{array}[{index}]",
-                        array = array.display(data),
-                        index = index.0.display(data)
-                    )
-                })
-            }
+                f.write_char(op)?;
+                expr.ast_write(data, f)
+            }),
+            Expr::CastAs(cast) => cast.with_inner(|CastAsExpr { expr, kw_as: _, ty }| {
+                write!(
+                    f,
+                    "{expr} as {ty}",
+                    expr = expr.display(data),
+                    ty = ty.display(data)
+                )
+            }),
+            Expr::Call(call_expr) => call_expr.with_inner(|CallExpr { callee, args }| {
+                write!(
+                    f,
+                    "{callee}({args})",
+                    callee = callee.display(data),
+                    args = Expr::display_comma_list(&args.0, data)
+                )
+            }),
+            Expr::Index(index_expr) => index_expr.with_inner(|IndexExpr { array, index }| {
+                write!(
+                    f,
+                    "{array}[{index}]",
+                    array = array.display(data),
+                    index = index.0.display(data)
+                )
+            }),
             Expr::Parens(parens) => {
-                parens.with_inner(|inner| {
-                    write!(f, "({})", inner.0.display(data))
-                })
+                parens.with_inner(|inner| write!(f, "({})", inner.0.display(data)))
             }
-            Expr::Tuple(tuple) => {
-                tuple.with_inner(|tuple| {
-                    match tuple.0.as_slice() {
-                        [] => f.write_str("()"),
-                        [one] => write!(f, "({},)", one.display(data)),
-                        expressions => {
-                            write!(f, "({})", Expr::display_comma_list(expressions, data))
-                        }
-                    }
-                })
-            },
-            Expr::List(list) => {
-                list.with_inner(|tuple| {
-                    let expressions = tuple.0.as_slice();
+            Expr::Tuple(tuple) => tuple.with_inner(|tuple| match tuple.0.as_slice() {
+                [] => f.write_str("()"),
+                [one] => write!(f, "({},)", one.display(data)),
+                expressions => {
+                    write!(f, "({})", Expr::display_comma_list(expressions, data))
+                }
+            }),
+            Expr::Array(list) => list.with_inner(|tuple| {
+                let expressions = tuple.0.as_slice();
 
-                    write!(f, "[{}]", Expr::display_comma_list(expressions, data))
-                })
-            },
-            Expr::Return(_, expr)
-            | Expr::Break(_, expr) => {
+                write!(f, "[{}]", Expr::display_comma_list(expressions, data))
+            }),
+            Expr::Return(_, expr) | Expr::Break(_, expr) => {
                 let name = match self {
                     Expr::Return(_, _) => "return",
                     Expr::Break(_, _) => "break",
-                    _ => unreachable!()
+                    _ => unreachable!(),
                 };
 
                 match expr {
                     None => f.write_str(name),
-                    Some(expr) => expr.with_inner(|inner| {
-                        write!(f, "{name} {}", inner.display(data))
-                    }),
+                    Some(expr) => {
+                        expr.with_inner(|inner| write!(f, "{name} {}", inner.display(data)))
+                    }
                 }
-            },
+            }
             Expr::Continue(_) => f.write_str("continue"),
 
-
-            Expr::Block(block) => block.with_inner(|block| {
-                block.ast_write(data, f)
-            }),
-            Expr::Loop(loop_expr) => loop_expr.with_inner(|expr| {
-                write!(f, "loop {}", expr.body.display(data))
-            }),
+            Expr::Block(block) => block.with_inner(|block| block.ast_write(data, f)),
+            Expr::Loop(loop_expr) => {
+                loop_expr.with_inner(|expr| write!(f, "loop {}", expr.body.display(data)))
+            }
             Expr::If(if_expr) => if_expr.with_inner(|if_expr| {
                 let write_branch = move |branch: &IfBranch, f: &mut Formatter| {
                     f.write_str("if ")?;
@@ -338,7 +313,7 @@ impl FmtAst for Block {
 
         const PADDING_CHEAP: &str = match str::from_utf8(PADDING_CHEAP_DATA.as_flattened()) {
             Ok(padding) => padding,
-            Err(_) => panic!("padding wasn't ascii space")
+            Err(_) => panic!("padding wasn't ascii space"),
         };
 
         let write_padding = |depth: u32, f: &mut Formatter| {
@@ -366,18 +341,15 @@ impl FmtAst for Block {
             write_padding(data.depth, f)?;
 
             match stmt {
-                Stmt::Item(item) => item.with_inner(|item| {
-                    item.ast_write(data, f)
-                })?,
+                Stmt::Item(item) => item.with_inner(|item| item.ast_write(data, f))?,
                 Stmt::Let(LetStmt {
-                              kw_let: _,
-                              kw_mut,
-                              name,
-                              ty,
-                              assignment,
-                              semicolon: _
-                          }) => {
-
+                    kw_let: _,
+                    kw_mut,
+                    name,
+                    ty,
+                    assignment,
+                    semicolon: _,
+                }) => {
                     f.write_str("let ")?;
                     if kw_mut.is_some() {
                         f.write_str("mut ")?
@@ -424,7 +396,11 @@ impl FmtAst for FunctionSignature {
 
         #[allow(non_local_definitions)]
         impl FmtAst for (Ident, TokenTy![":"], Type) {
-            fn ast_write<'a>(&'a self, data: RecurseData<'a>, f: &mut Formatter) -> std::fmt::Result {
+            fn ast_write<'a>(
+                &'a self,
+                data: RecurseData<'a>,
+                f: &mut Formatter,
+            ) -> std::fmt::Result {
                 let (arg_name, _, ty) = self;
 
                 write!(
@@ -436,10 +412,7 @@ impl FmtAst for FunctionSignature {
             }
         }
 
-        let args = <(Ident, TokenTy![":"], Type) as FmtAst>::display_comma_list(
-            &self.args.0,
-            data
-        );
+        let args = <(Ident, TokenTy![":"], Type) as FmtAst>::display_comma_list(&self.args.0, data);
 
         write!(f, "fn {name}({args}) ")?;
         if let Some((_arrow, ret_ty)) = self.ret.as_ref() {
@@ -483,26 +456,19 @@ impl FmtAst for Item {
     fn ast_write<'a>(&'a self, data: RecurseData<'a>, f: &mut Formatter) -> std::fmt::Result {
         match self {
             Item::Function(func) => func.ast_write(data, f),
-            Item::Const(const_item) => const_item.ast_write(data, f)
+            Item::Const(const_item) => const_item.ast_write(data, f),
         }
     }
 }
 
 impl FmtAst for OvalModule {
     fn ast_write<'a>(&'a self, data: RecurseData<'a>, f: &mut Formatter) -> std::fmt::Result {
-        let fmt = Item::display_list_seperated_by(
-            &self.items,
-            data,
-            "\n\n"
-        );
+        let fmt = Item::display_list_seperated_by(&self.items, data, "\n\n");
 
         Display::fmt(&fmt, f)
     }
 }
 
 pub fn display_module<'a>(module: &'a OvalModule, interner: &'a Interner) -> impl Display + 'a {
-    module.display(RecurseData {
-        interner,
-        depth: 0
-    })
+    module.display(RecurseData { interner, depth: 0 })
 }

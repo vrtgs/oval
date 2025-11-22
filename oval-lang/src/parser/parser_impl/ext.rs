@@ -1,4 +1,7 @@
+use crate::ast::recursive::Recursive;
 use crate::parser::{AstParse, InputTape, OvalParser, ParserData};
+use crate::recurse;
+use crate::spanned::{Span, Spanned};
 use crate::tokens::TokenTy;
 use crate::tokens::{Comma, CurlyBrace, Paren, SquareBracket, TokenKind};
 use alloc::vec::Vec;
@@ -6,11 +9,8 @@ use chumsky::IterParser;
 use chumsky::Parser;
 use chumsky::input::InputRef;
 use chumsky::prelude::just;
-use core::marker::PhantomData;
 use chumsky::recovery::ViaParser;
-use crate::ast::recursive::Recursive;
-use crate::recurse;
-use crate::spanned::{Span, Spanned};
+use core::marker::PhantomData;
 
 pub(crate) struct TupleParserInner<P, O, F1, F2, T> {
     parser: P,
@@ -172,25 +172,23 @@ impl<'src, I: InputTape<'src>, O, E: ParserData<'src, I>, P: OvalParser<'src, I,
 }
 
 #[inline(always)]
-pub(crate) const fn recursive_parser<'src, T: AstParse, I: InputTape<'src>, E: ParserData<'src, I>>()
--> impl OvalParser<'src, I, T, E> {
-    const {
-        chumsky::primitive::custom(|input| {
-            recurse(move || input.parse(T::parser()))
-        })
-    }
+pub(crate) const fn recursive_parser<
+    'src,
+    T: AstParse,
+    I: InputTape<'src>,
+    E: ParserData<'src, I>,
+>() -> impl OvalParser<'src, I, T, E> {
+    const { chumsky::primitive::custom(|input| recurse(move || input.parse(T::parser()))) }
 }
 
 pub(crate) const fn static_parser_inner<'src, F, O, P, I: InputTape<'src>, E: ParserData<'src, I>>(
-    func: F
+    func: F,
 ) -> impl OvalParser<'src, I, O, E>
-    where
-        F: Fn() -> P + Copy + Send + Sync + 'static,
-        P: Parser<'src, I, O, E>
+where
+    F: Fn() -> P + Copy + Send + Sync + 'static,
+    P: Parser<'src, I, O, E>,
 {
-    chumsky::primitive::custom(move |input| {
-        input.parse(func())
-    })
+    chumsky::primitive::custom(move |input| input.parse(func()))
 }
 
 macro_rules! static_parser {
@@ -219,12 +217,13 @@ macro_rules! static_unsized_parser {
     };
 }
 
-pub(crate) use {static_unsized_parser, static_parser};
+pub(crate) use {static_parser, static_unsized_parser};
 
 struct DelimitedTokens;
 
 impl AstParse for DelimitedTokens {
-    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>() -> impl OvalParser<'src, I, Self, E> {
+    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
+    -> impl OvalParser<'src, I, Self, E> {
         static_parser! {
             const DELIMITERS: [[TokenKind; 2]; 3] = [
                 [TokenKind::LParen, TokenKind::RParen],
@@ -244,10 +243,9 @@ impl AstParse for DelimitedTokens {
     }
 }
 
-
 pub trait Delimiter<T: Sized>: Sized {
     fn in_self<'src, I: InputTape<'src>, E: ParserData<'src, I>>(
-        parser: impl OvalParser<'src, I, T, E>
+        parser: impl OvalParser<'src, I, T, E>,
     ) -> impl OvalParser<'src, I, Self, E>;
 }
 
@@ -264,27 +262,32 @@ $(impl<T> Delimiter<T> for TokenTy![$l_paren, T, $r_paren] {
     };
 }
 
-
 impl_delimiters! {
     in_parens = '(' ')'
     in_square_brackets = '[' ']'
     in_curly_brackets = '{' '}'
 }
 
-pub(crate) fn recover_nested_delimiters_extra<'src, D: Delimiter<T>, T, I: InputTape<'src>, E: ParserData<'src, I>>(
-    fallback: impl Fn(Span) -> T + Copy + Send + Sync + 'static
+pub(crate) fn recover_nested_delimiters_extra<
+    'src,
+    D: Delimiter<T>,
+    T,
+    I: InputTape<'src>,
+    E: ParserData<'src, I>,
+>(
+    fallback: impl Fn(Span) -> T + Copy + Send + Sync + 'static,
 ) -> impl OvalParser<'src, I, D, E> {
-    let inner = DelimitedTokens::parser()
-        .map_with(move |_, extra| {
-            fallback(extra.span())
-        });
+    let inner = DelimitedTokens::parser().map_with(move |_, extra| fallback(extra.span()));
 
     D::in_self(inner)
 }
 
-pub(crate) fn recover_nested_delimiters<'src, D: Delimiter<T>, T: Default, I: InputTape<'src>, E: ParserData<'src, I>>(
-) -> ViaParser<impl OvalParser<'src, I, D, E>> {
-    chumsky::recovery::via_parser(recover_nested_delimiters_extra(
-        |_| T::default()
-    ))
+pub(crate) fn recover_nested_delimiters<
+    'src,
+    D: Delimiter<T>,
+    T: Default,
+    I: InputTape<'src>,
+    E: ParserData<'src, I>,
+>() -> ViaParser<impl OvalParser<'src, I, D, E>> {
+    chumsky::recovery::via_parser(recover_nested_delimiters_extra(|_| T::default()))
 }

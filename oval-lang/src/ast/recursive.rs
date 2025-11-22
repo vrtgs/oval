@@ -1,10 +1,10 @@
+use crate::recurse;
+use crate::spanned::{Span, Spanned};
 use alloc::boxed::Box;
 use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
-use crate::recurse;
-use crate::spanned::{Span, Spanned};
 
 #[derive(Debug, Clone)]
 #[repr(transparent)]
@@ -48,6 +48,15 @@ impl<T: ?Sized> Recursive<T> {
         let inner = self.get_ref();
         recurse(move || fun(inner))
     }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+
+    pub fn with_inner_mut<'a, U: 'a>(&'a mut self, fun: impl FnOnce(&'a mut T) -> U) -> U {
+        let inner = self.get_mut();
+        recurse(move || fun(inner))
+    }
 }
 
 impl<T> Recursive<[T]> {
@@ -55,10 +64,7 @@ impl<T> Recursive<[T]> {
         unsafe {
             // this slice is zero sized so any sufficiently aligned non-null pointer is a valid object
             // and is also valid as a box
-            let ptr = NonNull::slice_from_raw_parts(
-                NonNull::dangling(),
-                0
-            );
+            let ptr = NonNull::slice_from_raw_parts(NonNull::dangling(), 0);
 
             Self::from_ptr(ptr)
         }
@@ -106,6 +112,12 @@ cmp_trait! {
     }
 }
 
+impl<T: ?Sized + Spanned> Spanned for Recursive<T> {
+    fn span(&self) -> Span {
+        self.with_inner(<T as Spanned>::span)
+    }
+}
+
 impl<T: ?Sized> Drop for Recursive<T> {
     fn drop(&mut self) {
         match core::mem::needs_drop::<T>() {
@@ -142,13 +154,7 @@ impl<T: ?Sized> Drop for Recursive<T> {
             // we are obviously running in a drop impl so we won't be accessed again
             // and this is the fast path since we know T does not need extra stack space
             // and won't be dropped; this is just dealloc
-            false => unsafe { ManuallyDrop::drop(&mut self.0) }
+            false => unsafe { ManuallyDrop::drop(&mut self.0) },
         }
-    }
-}
-
-impl<T: ?Sized + Spanned> Spanned for Recursive<T> {
-    fn span(&self) -> Span {
-        self.with_inner(<T as Spanned>::span)
     }
 }

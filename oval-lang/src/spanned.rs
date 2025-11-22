@@ -58,7 +58,6 @@ impl Span {
             false => that.end,
         };
 
-
         Self::new(start, end)
     }
 
@@ -91,7 +90,6 @@ impl Span {
 pub trait Spanned {
     fn span(&self) -> Span;
 }
-
 
 macro_rules! spanned_struct {
     ($field: ident in $ty: ty) => {

@@ -1,18 +1,28 @@
-use alloc::vec;
-use crate::ast::{BinOp, Block, CallExpr, Expr, Function, Item, LetStmt, LiteralExpr, LiteralValue, OvalModule, Stmt, Type, UnOp, UnOpKind, BinOpKind, ConstItem, UnOpExpr, BinOpExpr, CastAsExpr, IndexExpr, LoopExpr, IntegerSuffix, IntegerRadix, IfExpr, IfBranch, FunctionSignature};
-use crate::parser::parser_impl::ext::{OvalParserExt, recursive_parser, recover_nested_delimiters, static_parser, recover_nested_delimiters_extra, static_unsized_parser};
+use crate::ast::recursive::Recursive;
+use crate::ast::{
+    BinOp, BinOpExpr, BinOpKind, Block, CallExpr, CastAsExpr, ConstItem, Expr, Function,
+    FunctionSignature, IfBranch, IfExpr, IndexExpr, IntegerRadix, IntegerType, Item, LetStmt,
+    LiteralExpr, LiteralValue, LoopExpr, OvalModule, Stmt, Type, UnOp, UnOpExpr, UnOpKind,
+};
+use crate::parser::parser_impl::ext::{
+    OvalParserExt, recover_nested_delimiters, recover_nested_delimiters_extra, recursive_parser,
+    static_parser, static_unsized_parser,
+};
+use crate::parser::parser_impl::{ParserError, Pattern};
 use crate::parser::{AstParse, InputTape, OvalParser, ParserData, ParserState};
-use crate::tokens::{Arrow, Equals, Colon, Comma, Extern, TokenKind, Fn, Ident, Let, Literal, Mut, Pub, Semicolon, Const, As, Not, Loop, Return, Break, If, Else, CurlyBrace, Token, SquareBracket};
+use crate::spanned::Span;
+use crate::spanned::Spanned;
+use crate::tokens::TokenTy;
+use crate::tokens::{
+    Arrow, As, Break, Colon, Comma, Const, CurlyBrace, Else, Equals, Extern, Fn, Ident, If, Let,
+    Literal, Loop, Mut, Not, Pub, Return, Semicolon, SquareBracket, Token, TokenKind,
+};
+use alloc::vec;
 use alloc::vec::Vec;
-use chumsky::{IterParser, Parser};
 use chumsky::extra::SimpleState;
 use chumsky::prelude::via_parser;
-use crate::ast::recursive::Recursive;
 use chumsky::primitive::group as parse_group;
-use crate::parser::parser_impl::{ParserError, Pattern};
-use crate::spanned::Span;
-use crate::tokens::TokenTy;
-use crate::spanned::Spanned;
+use chumsky::{IterParser, Parser};
 
 macro_rules! impl_suffixes {
     (
@@ -42,11 +52,12 @@ macro_rules! impl_suffixes {
 }
 
 impl AstParse for LiteralExpr {
-    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>() -> impl OvalParser<'src, I, Self, E> {
+    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
+    -> impl OvalParser<'src, I, Self, E> {
         pub fn parse_integer_literal<'src, I: InputTape<'src>, E: ParserError<'src, I>>(
             span: Span,
             number_full: &str,
-            errors: &mut Vec<E>
+            errors: &mut Vec<E>,
         ) -> LiteralValue {
             let (number, radix) = match number_full.as_bytes() {
                 [b'0', b'b', rest @ ..] => (rest, IntegerRadix::Binary),
@@ -59,9 +70,20 @@ impl AstParse for LiteralExpr {
                 let mut number = number;
 
                 let mut value = Some(0_u128);
-                while let &[byte, ref rest @ ..] = number
-                    && let Some(digit) = (byte as char).to_digit(radix as u32)
-                {
+                loop {
+                    let &[byte, ref rest @ ..] = number else {
+                        break;
+                    };
+
+                    if byte == b'_' {
+                        number = rest;
+                        continue;
+                    }
+
+                    let Some(digit) = (byte as char).to_digit(radix as u32) else {
+                        break;
+                    };
+
                     number = rest;
 
                     if let Some(old_value) = value
@@ -78,7 +100,7 @@ impl AstParse for LiteralExpr {
                     errors.push(E::custom(
                         span,
                         "integer literal too large",
-                        format_args!("value exceeds limit of `{}`", u128::MAX)
+                        format_args!("value exceeds limit of `{}`", u128::MAX),
                     ));
 
                     u128::MAX
@@ -92,7 +114,7 @@ impl AstParse for LiteralExpr {
                 number = number;
                 errors = errors;
                 span = span;
-                suffix_name = IntegerSuffix;
+                suffix_name = IntegerType;
 
                 b"isize" Isize,
                 b"i64" I64,
@@ -167,11 +189,7 @@ macro_rules! spanned_op {
 }
 
 fn fold_binop(lhs: Expr, (op, rhs): (BinOp, Expr)) -> Expr {
-    Expr::BinaryOp(Recursive::new(BinOpExpr {
-        lhs,
-        op,
-        rhs
-    }))
+    Expr::BinaryOp(Recursive::new(BinOpExpr { lhs, op, rhs }))
 }
 
 macro_rules! chained_binop_parers {
@@ -284,108 +302,110 @@ macro_rules! make_expr_parser {
         $expr: ident : Parser<Expr>
         $list: ident : Parser<Vec<Expr>>
         atom = $atom: expr
-    ) => {static_parser! {
-        let $expr = recursive_parser::<Expr, I, E>();
+    ) => {
+        static_parser! {
+            let $expr = recursive_parser::<Expr, I, E>();
 
-        let $list = $expr
-            .separated_by(Comma::parser())
-            .allow_trailing()
-            .collect();
+            let $list = $expr
+                .separated_by(Comma::parser())
+                .allow_trailing()
+                .collect();
 
-        let any_paren = recover_nested_delimiters_extra::<TokenTy!['(', (), ')'], _, _, _>(drop)
-            .map(|parens| {
-                Expr::Tuple(Recursive::new(parens.map(|()| vec![])))
-            });
+            let any_paren = recover_nested_delimiters_extra::<TokenTy!['(', (), ')'], _, _, _>(drop)
+                .map(|parens| {
+                    Expr::Tuple(Recursive::new(parens.map(|()| vec![])))
+                });
 
-        let any_list = recover_nested_delimiters_extra::<TokenTy!['[', (), ']'], _, _, _>(drop)
-            .map(|bracket| {
-                Expr::List(Recursive::new(bracket.map(|()| vec![])))
-            });
+            let any_list = recover_nested_delimiters_extra::<TokenTy!['[', (), ']'], _, _, _>(drop)
+                .map(|bracket| {
+                    Expr::Array(Recursive::new(bracket.map(|()| vec![])))
+                });
 
-        let primary = $atom
-            .recover_with(via_parser(any_paren))
-            .recover_with(via_parser(any_list));
+            let primary = $atom
+                .recover_with(via_parser(any_paren))
+                .recover_with(via_parser(any_list));
 
-        // call have the highest binding power
-        // so start with them
-        // calls are left associative simply due to them being at the end of an expression
-        enum CallType {
-            Call(TokenTy!['(', Vec<Expr>, ')']),
-            Index(TokenTy!['[', Expr, ']']),
-        }
+            // call have the highest binding power
+            // so start with them
+            // calls are left associative simply due to them being at the end of an expression
+            enum CallType {
+                Call(TokenTy!['(', Vec<Expr>, ')']),
+                Index(TokenTy!['[', Expr, ']']),
+            }
 
-        let call = primary.foldl(
-            chumsky::primitive::choice((
-                $list.in_parens().map(CallType::Call),
-                $expr.in_square_brackets().map(CallType::Index)
-            )).repeated(),
-            |expr, call_ty| {
-                match call_ty {
-                    CallType::Call(args) => {
-                        Expr::Call(Recursive::new(CallExpr {
-                            callee: expr,
-                            args
-                        }))
+            let call = primary.foldl(
+                chumsky::primitive::choice((
+                    $list.in_parens().map(CallType::Call),
+                    $expr.in_square_brackets().map(CallType::Index)
+                )).repeated(),
+                |expr, call_ty| {
+                    match call_ty {
+                        CallType::Call(args) => {
+                            Expr::Call(Recursive::new(CallExpr {
+                                callee: expr,
+                                args
+                            }))
+                        }
+                        CallType::Index(index) => Expr::Index(Recursive::new(IndexExpr {
+                            array: expr,
+                            index
+                        })),
                     }
-                    CallType::Index(index) => Expr::Index(Recursive::new(IndexExpr {
-                        array: expr,
-                        index
-                    })),
                 }
-            }
-        );
+            );
 
 
-        let unop = spanned_op! {
-            UnOp {
-                Minus => Neg,
-                Not => Not
-            }
-        };
+            let unop = spanned_op! {
+                UnOp {
+                    Minus => Neg,
+                    Not => Not
+                }
+            };
 
-        // unary comes next in the precedence list
-        let unary = unop.repeated().foldr(call, |op, expr| {
-            Expr::UnaryOp(Recursive::new(UnOpExpr {
-                op,
-                expr,
-            }))
-        });
+            // unary comes next in the precedence list
+            let unary = unop.repeated().foldr(call, |op, expr| {
+                Expr::UnaryOp(Recursive::new(UnOpExpr {
+                    op,
+                    expr,
+                }))
+            });
 
-        let as_cast = unary.foldl(
-            As::parser().then(Type::parser()).repeated(),
-            |expr, (kw_as, ty)| Expr::CastAs(Recursive::new(CastAsExpr {
-                expr,
-                kw_as,
-                ty,
-            }))
-        );
+            let as_cast = unary.foldl(
+                As::parser().then(Type::parser()).repeated(),
+                |expr, (kw_as, ty)| Expr::CastAs(Recursive::new(CastAsExpr {
+                    expr,
+                    kw_as,
+                    ty,
+                }))
+            );
 
-        let binop_applied = chained_binop_parers! {
-            start = as_cast;
-            product: {
-                Star => Mul,
-                Slash => Div,
-                Percent => Rem
-            }
-            sum: {
-                Plus => Add,
-                Minus => Sub
-            }
+            let binop_applied = chained_binop_parers! {
+                start = as_cast;
+                product: {
+                    Star => Mul,
+                    Slash => Div,
+                    Percent => Rem
+                }
+                sum: {
+                    Plus => Add,
+                    Minus => Sub
+                }
 
-            comparison: no_chaining {
-                LessThan => Lt,
-                LessthanOrEqual => Le,
-                GreaterThan => Gt,
-                GreaterThanOrEqual => Ge,
+                comparison: no_chaining {
+                    LessThan => Lt,
+                    LessthanOrEqual => Le,
+                    GreaterThan => Gt,
+                    GreaterThanOrEqual => Ge,
 
-                IsEquality => Eq,
-                IsNotEqual => Ne,
-            }
-        };
+                    IsEquality => Eq,
+                    IsNotEqual => Ne,
+                }
+            };
 
 
-        binop_applied.labelled(Pattern::Label("expression"))
-    }};
+            binop_applied.labelled(Pattern::Label("expression"))
+        }
+    };
 }
 
 macro_rules! declare_expression {
@@ -432,7 +452,6 @@ macro_rules! declare_expression {
         }
     };
 }
-
 
 declare_expression! {
     expr: Parser<Expr>
@@ -484,7 +503,7 @@ declare_expression! {
         list
             .in_square_brackets()
             .map(|list| {
-                Expr::List(Recursive::new(list))
+                Expr::Array(Recursive::new(list))
             }),
         Ident::parser().map(Expr::Ident),
         Return::parser().then(expr.or_not()).map(|(tok, ret)| {
@@ -497,7 +516,8 @@ declare_expression! {
 }
 
 impl AstParse for LetStmt {
-    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>() -> impl OvalParser<'src, I, Self, E> {
+    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
+    -> impl OvalParser<'src, I, Self, E> {
         static_parser! {
             Let::parser()
                 .then(Mut::parser().or_not())
@@ -520,7 +540,8 @@ impl AstParse for LetStmt {
 }
 
 impl AstParse for Block {
-    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>() -> impl OvalParser<'src, I, Self, E> {
+    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
+    -> impl OvalParser<'src, I, Self, E> {
         // I favor making block unsized rather than expr
         // because expr's parser runs a LOT more
         static_unsized_parser! {
@@ -642,19 +663,15 @@ impl AstParse for Type {
 }
 
 impl AstParse for FunctionSignature {
-    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>() -> impl OvalParser<'src, I, Self, E> {
-        let arg = parse_group((
-            Ident::parser(),
-            Colon::parser(),
-            Type::parser(),
-        ));
+    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
+    -> impl OvalParser<'src, I, Self, E> {
+        let arg = parse_group((Ident::parser(), Colon::parser(), Type::parser()));
 
         let args = arg
             .separated_by(Comma::parser())
             .allow_trailing()
             .collect::<Vec<_>>()
             .in_parens();
-
 
         let func = parse_group((
             Pub::parser().or_not(),
@@ -665,21 +682,22 @@ impl AstParse for FunctionSignature {
             Arrow::parser().then(Type::parser()).or_not(),
         ));
 
-        func.map(|(kw_pub, kw_extern, kw_fn, name, args, ret)| FunctionSignature {
-            kw_pub,
-            kw_extern,
-            kw_fn,
-            name,
-            args,
-            ret,
-        })
+        func.map(
+            |(kw_pub, kw_extern, kw_fn, name, args, ret)| FunctionSignature {
+                kw_pub,
+                kw_extern,
+                kw_fn,
+                name,
+                args,
+                ret,
+            },
+        )
     }
 }
 
 impl AstParse for Function {
     fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
-        -> impl OvalParser<'src, I, Self, E>
-    {
+    -> impl OvalParser<'src, I, Self, E> {
         static_parser! {
             let parser = FunctionSignature::parser().then(chumsky::primitive::choice((
                 Block::parser(),
@@ -715,7 +733,8 @@ impl AstParse for Function {
 }
 
 impl AstParse for ConstItem {
-    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>() -> impl OvalParser<'src, I, Self, E> {
+    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
+    -> impl OvalParser<'src, I, Self, E> {
         static_parser! {
             let item = parse_group((
                 Pub::parser().or_not(),
@@ -783,7 +802,8 @@ impl AstParse for Item {
 }
 
 impl AstParse for OvalModule {
-    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>() -> impl OvalParser<'src, I, Self, E> {
+    fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
+    -> impl OvalParser<'src, I, Self, E> {
         static_parser! {
             Item::parser()
                 .repeated()

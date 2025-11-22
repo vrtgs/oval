@@ -13,6 +13,10 @@ fn main() -> eyre::Result<()> {
         let _ = core::hint::black_box(fmt_ast::display_module);
     }
 
+    if result.errors.is_none() {
+        println!("{}", fmt_ast::display_module(&result.module, &interner));
+    }
+
     let _module = match oval_lang::compile::compile(&mut interner, result) {
         Err(err) => {
             let source = ariadne::Source::from(source);

@@ -1,9 +1,9 @@
 use crate::hashed::HashMap;
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use alloc::vec;
-use core::borrow::Borrow;
+use alloc::vec::Vec;
 use cfg_if::cfg_if;
+use core::borrow::Borrow;
 use core::fmt::{Debug, Formatter};
 use core::hash::{Hash, Hasher};
 use core::num::NonZero;
@@ -58,7 +58,7 @@ impl Debug for Symbol {
 
 enum InternedStr {
     Static(&'static str),
-    Boxed(Box<str>)
+    Boxed(Box<str>),
 }
 
 impl InternedStr {
@@ -110,7 +110,6 @@ impl From<&str> for InternedStr {
     }
 }
 
-
 pub struct Interner {
     interned: Vec<NonNull<str>>,
     map: HashMap<InternedStr, Symbol>,
@@ -122,14 +121,11 @@ pub struct Interner {
 unsafe impl Send for Interner {}
 unsafe impl Sync for Interner {}
 
-
 impl Default for Interner {
     fn default() -> Self {
         Self::new()
     }
 }
-
-
 
 macro_rules! declare_static_symbols {
     (@make_unit $x: expr) => { () };
@@ -273,7 +269,6 @@ macro_rules! declare_static_symbols {
     };
 }
 
-
 declare_static_symbols! {
     USIZE = "usize";
     U64 = "u64";
@@ -333,10 +328,7 @@ impl Interner {
 
     pub fn try_resolve(&self, symbol: Symbol) -> Option<&str> {
         let idx = symbol_to_usize(symbol.0.get() - 1);
-        let ptr = self
-            .interned
-            .get(idx)
-            .copied()?;
+        let ptr = self.interned.get(idx).copied()?;
 
         // Safety:
         // Box has a stable address, and entries from the map are never removed
@@ -347,18 +339,15 @@ impl Interner {
         Some(str)
     }
 
-
     pub fn resolve(&self, symbol: Symbol) -> &str {
-        self
-            .try_resolve(symbol)
+        self.try_resolve(symbol)
             .expect("symbols passed to resolve should come from the same interner")
     }
 }
 
 impl Debug for Interner {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
-        f
-            .debug_struct("Interner")
+        f.debug_struct("Interner")
             .field("count", &self.interned.len())
             .finish_non_exhaustive()
     }

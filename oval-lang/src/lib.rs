@@ -7,11 +7,11 @@ pub(crate) mod hashed;
 pub(crate) mod mir;
 
 pub mod ast;
+pub mod compile;
 pub mod interner;
 pub mod parser;
 pub mod spanned;
 pub mod tokens;
-pub mod compile;
 
 #[inline(always)]
 pub(crate) fn recurse<R, F: FnOnce() -> R>(callback: F) -> R {

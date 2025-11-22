@@ -1,23 +1,23 @@
-use alloc::borrow::Cow;
 use crate::interner::Interner;
 use crate::spanned::{Span, Spanned};
 use crate::tokens::{TokenKind, TokenizerError};
+use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::fmt::{Debug, Display, Formatter};
 use ariadne::{Label, Report, ReportKind};
 use chumsky::DefaultExpected;
 use chumsky::inspector::SimpleState;
 use chumsky::label::LabelError;
 use chumsky::util::MaybeRef;
+use core::fmt::{Debug, Display, Formatter};
 
 mod ast_impl;
 
 pub mod ext;
 
-pub(crate) use ext::{static_parser, static_unsized_parser, static_parser_inner};
+pub(crate) use ext::{static_parser, static_parser_inner, static_unsized_parser};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub(crate) enum Pattern {
@@ -57,15 +57,14 @@ pub(crate) enum SyntaxErrorReason {
     Custom {
         span: Span,
         label: Cow<'static, str>,
-        message: String
+        message: String,
     },
     CustomLabeled {
         span: Span,
         label: Cow<'static, str>,
-        labels: Vec<(Span, String)>
+        labels: Vec<(Span, String)>,
     },
 }
-
 
 fn fmt_pattern(pattern: &Pattern, f: &mut Formatter<'_>) -> core::fmt::Result {
     let str = match *pattern {
@@ -82,23 +81,17 @@ fn fmt_pattern(pattern: &Pattern, f: &mut Formatter<'_>) -> core::fmt::Result {
 impl Display for SyntaxErrorReason {
     fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         match self {
-            SyntaxErrorReason::TokenizerError(err) => {
-                <TokenizerError as Display>::fmt(err, f)
-            },
+            SyntaxErrorReason::TokenizerError(err) => <TokenizerError as Display>::fmt(err, f),
             SyntaxErrorReason::Custom { message, .. } => f.write_str(message),
             SyntaxErrorReason::CustomLabeled { label, .. } => f.write_str(label),
             SyntaxErrorReason::ExpectedFound {
-                expected,
-                found,
-                ..
+                expected, found, ..
             } => {
                 f.write_str("expected ")?;
                 let mut iter = expected.iter();
                 match iter.next().map(|pat| (pat, iter.next())) {
                     None => f.write_str("something")?,
-                    Some((one, None)) => {
-                        fmt_pattern(one, f)?
-                    }
+                    Some((one, None)) => fmt_pattern(one, f)?,
                     Some((one, Some(last))) => {
                         match iter.next() {
                             // one of
@@ -165,27 +158,23 @@ impl<T: Into<SyntaxErrorReason>> From<T> for SyntaxError {
 }
 
 impl<'src, I: InputTape<'src>> ParserErrorInner<'src, I> for SyntaxError {
-    fn custom(
-        span: I::Span,
-        label: impl Into<Cow<'static, str>>,
-        message: impl ToString
-    ) -> Self {
+    fn custom(span: I::Span, label: impl Into<Cow<'static, str>>, message: impl ToString) -> Self {
         Self(Box::new(SyntaxErrorReason::Custom {
             span,
             label: label.into(),
-            message: message.to_string()
+            message: message.to_string(),
         }))
     }
 
     fn custom_with_labels(
         span: I::Span,
         label: impl Into<Cow<'static, str>>,
-        labels: impl Iterator<Item=(I::Span, impl ToString)>
+        labels: impl Iterator<Item = (I::Span, impl ToString)>,
     ) -> Self {
         Self(Box::new(SyntaxErrorReason::CustomLabeled {
             span,
             label: label.into(),
-            labels: labels.map(|(span, str)| (span, str.to_string())).collect()
+            labels: labels.map(|(span, str)| (span, str.to_string())).collect(),
         }))
     }
 
@@ -263,7 +252,6 @@ impl Debug for ParseErrors {
     }
 }
 
-
 impl ParseErrors {
     /// `fatal_errors` stop semantic analysis
     /// `recoverable_errors` don't stop semantic analysis but do stop further compilation
@@ -271,8 +259,8 @@ impl ParseErrors {
     /// returns None if there are no errors
     /// and returns some if any iterator yields an error
     pub(crate) fn new(
-        fatal_errors: impl IntoIterator<Item=SyntaxError>,
-        recoverable_errors: impl IntoIterator<Item=SyntaxError>,
+        fatal_errors: impl IntoIterator<Item = SyntaxError>,
+        recoverable_errors: impl IntoIterator<Item = SyntaxError>,
     ) -> Option<Self> {
         let mut contains_fatal_error = false;
         let errors = fatal_errors
@@ -282,12 +270,12 @@ impl ParseErrors {
             .collect::<Vec<_>>();
 
         if errors.is_empty() {
-            return None
+            return None;
         }
 
         Some(Self(Box::new(InnerError {
             errors,
-            contains_fatal_error
+            contains_fatal_error,
         })))
     }
 
@@ -296,29 +284,23 @@ impl ParseErrors {
     }
 }
 
-
 /// FIXME this should be revised
 impl ParseErrors {
-    pub fn reports(&self) -> impl Iterator<Item=Report<'_, Span>> {
+    pub fn reports(&self) -> impl Iterator<Item = Report<'_, Span>> {
         self.0.errors.iter().map(|err| {
             let span = err.span();
-            let mut builder = Report::build(ReportKind::Error, span)
-                .with_message(err.0.label());
+            let mut builder = Report::build(ReportKind::Error, span).with_message(err.0.label());
 
             builder = match &*err.0 {
-                SyntaxErrorReason::CustomLabeled {
-                    labels,
-                    ..
-                } => {
+                SyntaxErrorReason::CustomLabeled { labels, .. } => {
                     let labels = labels
                         .iter()
                         .map(|&(span, ref msg)| Label::new(span).with_message(msg));
 
                     builder.with_labels(labels)
-                },
-                _ => builder.with_label(Label::new(span).with_message(&*err.0))
+                }
+                _ => builder.with_label(Label::new(span).with_message(&*err.0)),
             };
-
 
             builder.finish()
         })
@@ -338,18 +320,13 @@ impl<'src, I: chumsky::input::ValueInput<'src, Span = Span, Token = TokenKind>> 
 }
 
 pub trait ParserErrorInner<'src, I: InputTape<'src>> {
-    fn custom(
-        span: I::Span,
-        label: impl Into<Cow<'static, str>>,
-        message: impl ToString
-    ) -> Self;
+    fn custom(span: I::Span, label: impl Into<Cow<'static, str>>, message: impl ToString) -> Self;
 
     fn custom_with_labels(
         span: I::Span,
         label: impl Into<Cow<'static, str>>,
-        labels: impl Iterator<Item=(I::Span, impl ToString)>
+        labels: impl Iterator<Item = (I::Span, impl ToString)>,
     ) -> Self;
-
 
     fn expected_found<L: Into<Pattern>, It: IntoIterator<Item = L>>(
         expected: It,
@@ -408,47 +385,30 @@ impl<'src, I: InputTape<'src>, E: ParserErrorInner<'src, I>> chumsky::error::Err
 }
 
 pub trait ParserError<'src, I: InputTape<'src>>:
-    chumsky::error::Error<'src, I>
-    + LabelError<'src, I, Pattern>
+    chumsky::error::Error<'src, I> + LabelError<'src, I, Pattern>
 {
-    fn custom(
-        span: I::Span,
-        label: impl Into<Cow<'static, str>>,
-        message: impl ToString
-    ) -> Self;
+    fn custom(span: I::Span, label: impl Into<Cow<'static, str>>, message: impl ToString) -> Self;
 
     fn custom_with_labels(
         span: I::Span,
         label: impl Into<Cow<'static, str>>,
-        labels: impl IntoIterator<Item=(I::Span, impl ToString)>
+        labels: impl IntoIterator<Item = (I::Span, impl ToString)>,
     ) -> Self;
 }
 
 impl<'src, I: InputTape<'src>, E: ParserErrorInner<'src, I>> ParserError<'src, I>
     for ParserErrorWrapper<E>
 {
-    fn custom(
-        span: I::Span,
-        label: impl Into<Cow<'static, str>>,
-        message: impl ToString
-    ) -> Self {
-        ParserErrorWrapper(E::custom(
-            span,
-            label,
-            message
-        ))
+    fn custom(span: I::Span, label: impl Into<Cow<'static, str>>, message: impl ToString) -> Self {
+        ParserErrorWrapper(E::custom(span, label, message))
     }
 
     fn custom_with_labels(
         span: I::Span,
         label: impl Into<Cow<'static, str>>,
-        labels: impl IntoIterator<Item=(I::Span, impl ToString)>
+        labels: impl IntoIterator<Item = (I::Span, impl ToString)>,
     ) -> Self {
-        ParserErrorWrapper(E::custom_with_labels(
-            span,
-            label,
-            labels.into_iter()
-        ))
+        ParserErrorWrapper(E::custom_with_labels(span, label, labels.into_iter()))
     }
 }
 
@@ -466,24 +426,22 @@ pub trait ParserData<'src, I: InputTape<'src>>:
         'src,
         I,
         Error: ParserError<'src, I>,
-        State = SimpleState<ParserState<
-            'src,
-            <Self as chumsky::extra::ParserExtra<'src, I>>::Error
-        >>,
+        State = SimpleState<
+            ParserState<'src, <Self as chumsky::extra::ParserExtra<'src, I>>::Error>,
+        >,
     > + 'src
 {
 }
 
 impl<'src, I: InputTape<'src>, PE> ParserData<'src, I> for PE where
     PE: chumsky::extra::ParserExtra<
-        'src,
-        I,
-        Error: ParserError<'src, I>,
-        State = SimpleState<ParserState<
             'src,
-            <Self as chumsky::extra::ParserExtra<'src, I>>::Error
-        >>,
-    > + 'src
+            I,
+            Error: ParserError<'src, I>,
+            State = SimpleState<
+                ParserState<'src, <Self as chumsky::extra::ParserExtra<'src, I>>::Error>,
+            >,
+        > + 'src
 {
 }
 

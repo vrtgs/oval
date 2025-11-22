@@ -12,7 +12,9 @@ use crate::parser::parser_impl::{ParserErrorWrapper, SyntaxError};
 use crate::spanned::Span;
 use crate::tokens::{Tokenizer, TokenizerError};
 pub use parser_impl::ParseErrors;
-pub(crate) use parser_impl::{AstParse, InputTape, OvalParser, ParserData, ParserState, static_parser, static_unsized_parser};
+pub(crate) use parser_impl::{
+    AstParse, InputTape, OvalParser, ParserData, ParserState, static_parser, static_unsized_parser,
+};
 
 #[allow(unused_imports)]
 pub(crate) use parser_impl::static_parser_inner;
@@ -35,7 +37,7 @@ impl ParseResult {
     pub fn into_result(self) -> Result<OvalModule, ParseErrors> {
         match self.errors {
             Some(err) => Err(err),
-            None => Ok(self.module)
+            None => Ok(self.module),
         }
     }
 }
@@ -63,7 +65,7 @@ impl ParseOvalModuleSealed for &str {
         let mut state: SimpleState<ParserState<_>> = SimpleState(ParserState {
             interner,
             text: self,
-            produced_errors: vec![]
+            produced_errors: vec![],
         });
 
         type Extra<'src> = chumsky::extra::Full<
@@ -78,25 +80,17 @@ impl ParseOvalModuleSealed for &str {
 
         let SimpleState(state) = state;
 
-        let recoverable_errors = state.produced_errors
-            .into_iter()
-            .map(|err| err.0)
-            .chain({
-                tokenizer_errors
-                    .into_inner()
-                    .into_iter()
-                    .map(TokenizerError)
-                    .map(SyntaxError::from)
-            });
+        let recoverable_errors = state.produced_errors.into_iter().map(|err| err.0).chain({
+            tokenizer_errors
+                .into_inner()
+                .into_iter()
+                .map(TokenizerError)
+                .map(SyntaxError::from)
+        });
 
-        let fatal_errors = errors
-            .into_iter()
-            .map(|err| err.0);
+        let fatal_errors = errors.into_iter().map(|err| err.0);
 
-        let error = ParseErrors::new(
-            fatal_errors,
-            recoverable_errors
-        );
+        let error = ParseErrors::new(fatal_errors, recoverable_errors);
 
         if file.is_none() {
             assert!(
@@ -106,7 +100,14 @@ impl ParseOvalModuleSealed for &str {
         }
 
         ParseResult {
-            module: file.unwrap_or(const { OvalModule { attributes: vec![], items: vec![] } }),
+            module: file.unwrap_or(
+                const {
+                    OvalModule {
+                        attributes: vec![],
+                        items: vec![],
+                    }
+                },
+            ),
             errors: error,
         }
     }

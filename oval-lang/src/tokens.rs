@@ -1,13 +1,13 @@
 use crate::interner::Symbol;
+use crate::parser::static_parser;
 use crate::parser::{AstParse, InputTape, OvalParser, ParserData, ParserState};
-use crate::spanned::{spanned_struct, Span, Spanned};
-use chumsky::extra::SimpleState;
+use crate::spanned::{Span, Spanned, spanned_struct};
 use chumsky::Parser;
+use chumsky::extra::SimpleState;
 use core::fmt::{Debug, Formatter};
 use core::iter::FusedIterator;
 use core::str::Chars;
 use thiserror::Error;
-use crate::parser::static_parser;
 
 macro_rules! impl_token_ty {
     ($name: ident = $str: tt) => {
@@ -335,7 +335,7 @@ macro_rules! make_tokens {
 
                                     let ident = &token_start_str[..end_relative];
 
-                                    #[deny(unreachable_patterns)]
+                                    #[forbid(unreachable_patterns)]
                                     match ident {
                                         "true" => TokenKind::Literal(Literal::Bool(true)),
                                         "false" => TokenKind::Literal(Literal::Bool(false)),
@@ -347,7 +347,7 @@ macro_rules! make_tokens {
                                     if first == '0' {
                                         eat!('x' | 'b' | 'o');
                                     }
-                                    
+
                                     eat_while!('0'..='9' | '_');
                                     // e is not allowed to start the suffix
                                     #[allow(non_contiguous_range_endpoints)]
@@ -650,7 +650,7 @@ make_tokens! {
         LessthanOrEqual = "<=";
         GreaterThan = ">";
         GreaterThanOrEqual = ">=";
-        
+
         // equality
         IsEquality = "==";
         IsNotEqual = "!=";
