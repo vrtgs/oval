@@ -1,0 +1,35 @@
+const X: usize = 3;
+const Y: [u8; X] = [3; X];
+const Z: usize = Y[0] as usize;
+
+fn bar(a: [u8; X], apply: fn([u8; X]) -> [u8; Z]) -> [u8] {
+    FOO(apply(a))
+}
+
+const fn foo(mut x: [u8; X]) -> [u8; Z] {
+    const FOO: [u8] = [1, 2, 3];
+
+    x[0] = FOO[0];
+    x[1] = FOO[1];
+    x[2] = FOO[2];
+
+    x
+}
+
+const FOO: fn([u8; X]) -> [u8; Z] = foo;
+
+const fn fibonacci2(n: usize) -> usize {
+    fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+const fn fibonacci(n: usize) -> usize {
+    if n == 0 {
+        1
+    } else if n == 1 {
+        1
+    } else {
+       fibonacci2(n)
+    }
+}
+
+fn take_fib_arr(a: [u8; fibonacci(3)]) {}

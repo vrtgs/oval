@@ -1,21 +1,21 @@
 use crate::ast::OvalModule;
 use crate::parser::sealed::ParseOvalModuleSealed;
 use alloc::vec;
-use chumsky::Parser;
 use chumsky::extra::SimpleState;
+use chumsky::Parser;
 use core::cell::RefCell;
 
 mod parser_impl;
 use crate::hashed::HashSet;
-use crate::interner::Interner;
 use crate::parser::parser_impl::{ParserErrorWrapper, SyntaxError};
 use crate::spanned::Span;
 use crate::tokens::{Tokenizer, TokenizerError};
 pub use parser_impl::ParseErrors;
 pub(crate) use parser_impl::{
-    AstParse, InputTape, OvalParser, ParserData, ParserState, static_parser, static_unsized_parser,
+    static_parser, AstParse, InputTape, OvalParser, ParserData, ParserState,
 };
 
+use crate::interner::Interner;
 #[allow(unused_imports)]
 pub(crate) use parser_impl::static_parser_inner;
 

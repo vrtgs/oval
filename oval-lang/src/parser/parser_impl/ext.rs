@@ -5,11 +5,11 @@ use crate::spanned::{Span, Spanned};
 use crate::tokens::TokenTy;
 use crate::tokens::{Comma, CurlyBrace, Paren, SquareBracket, TokenKind};
 use alloc::vec::Vec;
-use chumsky::IterParser;
-use chumsky::Parser;
 use chumsky::input::InputRef;
 use chumsky::prelude::just;
 use chumsky::recovery::ViaParser;
+use chumsky::IterParser;
+use chumsky::Parser;
 use core::marker::PhantomData;
 
 pub(crate) struct TupleParserInner<P, O, F1, F2, T> {
@@ -118,7 +118,7 @@ pub(crate) type TupleParser<P, O, F1, F2, T> =
 
 macro_rules! impl_delimiters {
     ($self: expr, $delimiter: ident) => {{
-        paste::paste! {
+        pastey::paste! {
             $self
                 .delimited_by(
                     static_parser! { just(TokenKind::[<L $delimiter>]) },
@@ -197,22 +197,28 @@ macro_rules! static_parser {
         // if we don't unsize we get linker errors if the symbols are not stripped
         // and compile times go to the moon
         $crate::parser::static_unsized_parser! {
-            $($body)*
+            { $($body)* }
         }
     };
 }
 
 macro_rules! static_unsized_parser {
-    ($($body: tt)*) => {
+    ($body: block) => {
         const {
             $crate::parser::static_parser_inner(move || {
-                let parser = &const { crate::parser::static_parser_inner(move || { $($body)* }) };
+                let parser = &const { crate::parser::static_parser_inner(move || $body) };
                 // store the parser in static memory
-                // this parser is OvalParser - the copy requirement
-                // well after being referenced it gains it again, and we get the OvalParser back
+                // this parser is OvalParser minus the copy requirement
+                // and after being referenced it gains it again, and we get the OvalParser back
                 let parser: &(dyn ::chumsky::Parser<_, _, _> + Send + Sync) = parser;
                 parser
             })
+        }
+    };
+
+    ($($body: tt)*) => {
+        $crate::parser::static_unsized_parser! {
+            { $($body)* }
         }
     };
 }

@@ -1,22 +1,24 @@
 use crate::ast::recursive::Recursive;
+use crate::ast::ArrayElements;
 use crate::ast::{
-    BinOp, BinOpExpr, BinOpKind, Block, CallExpr, CastAsExpr, ConstItem, Expr, Function,
-    FunctionSignature, IfBranch, IfExpr, IndexExpr, IntegerRadix, IntegerType, Item, LetStmt,
-    LiteralExpr, LiteralValue, LoopExpr, OvalModule, Stmt, Type, UnOp, UnOpExpr, UnOpKind,
+    AssignExpr, BinOp, BinOpExpr, BinOpKind, Block, CallExpr, CastAsExpr, ConstItem, Expr,
+    Function, FunctionSignature, IfBranch, IfExpr, IndexExpr, IntTy, IntegerRadix, Item,
+    LetStmt, LiteralExpr, LiteralValue, LoopExpr, OvalModule, Stmt, Type, UnOp, UnOpExpr,
+    UnOpKind,
 };
 use crate::parser::parser_impl::ext::{
-    OvalParserExt, recover_nested_delimiters, recover_nested_delimiters_extra, recursive_parser,
-    static_parser, static_unsized_parser,
+    recover_nested_delimiters, recover_nested_delimiters_extra, recursive_parser, static_parser,
+    static_unsized_parser, OvalParserExt,
 };
 use crate::parser::parser_impl::{ParserError, Pattern};
 use crate::parser::{AstParse, InputTape, OvalParser, ParserData, ParserState};
 use crate::spanned::Span;
 use crate::spanned::Spanned;
-use crate::tokens::TokenTy;
 use crate::tokens::{
     Arrow, As, Break, Colon, Comma, Const, CurlyBrace, Else, Equals, Extern, Fn, Ident, If, Let,
     Literal, Loop, Mut, Not, Pub, Return, Semicolon, SquareBracket, Token, TokenKind,
 };
+use crate::tokens::{Dyn, TokenTy};
 use alloc::vec;
 use alloc::vec::Vec;
 use chumsky::extra::SimpleState;
@@ -114,7 +116,7 @@ impl AstParse for LiteralExpr {
                 number = number;
                 errors = errors;
                 span = span;
-                suffix_name = IntegerType;
+                suffix_name = IntTy;
 
                 b"isize" Isize,
                 b"i64" I64,
@@ -177,7 +179,7 @@ macro_rules! spanned_op {
     ($op: ident {
         $($token_kind: ident => $op_kind: ident),+ $(,)?
     }) => {{
-        paste::paste! {
+        pastey::paste! {
             chumsky::select! {
                 $(TokenKind::$token_kind = e => $op {
                     span: e.span(),
@@ -318,7 +320,7 @@ macro_rules! make_expr_parser {
 
             let any_list = recover_nested_delimiters_extra::<TokenTy!['[', (), ']'], _, _, _>(drop)
                 .map(|bracket| {
-                    Expr::Array(Recursive::new(bracket.map(|()| vec![])))
+                    Expr::Array(Recursive::new(bracket.map(|()| ArrayElements::EMPTY)))
                 });
 
             let primary = $atom
@@ -347,7 +349,7 @@ macro_rules! make_expr_parser {
                             }))
                         }
                         CallType::Index(index) => Expr::Index(Recursive::new(IndexExpr {
-                            array: expr,
+                            container: expr,
                             index
                         })),
                     }
@@ -397,13 +399,20 @@ macro_rules! make_expr_parser {
                     GreaterThan => Gt,
                     GreaterThanOrEqual => Ge,
 
-                    IsEquality => Eq,
+                    IsEqual => Eq,
                     IsNotEqual => Ne,
                 }
             };
 
+            let with_assignment = binop_applied.then(Equals::parser()).repeated().foldr(binop_applied, |(location, assign), expr| {
+                Expr::Assign(Recursive::new(AssignExpr {
+                    location,
+                    assign,
+                    expr,
+                }))
+            });
 
-            binop_applied.labelled(Pattern::Label("expression"))
+            with_assignment.labelled(Pattern::Label("expression"))
         }
     };
 }
@@ -503,7 +512,18 @@ declare_expression! {
         list
             .in_square_brackets()
             .map(|list| {
-                Expr::Array(Recursive::new(list))
+                Expr::Array(Recursive::new(list.map(ArrayElements::Literal)))
+            }),
+        chumsky::primitive::group((expr, Semicolon::parser(), Dyn::parser().or_not(), expr))
+            .in_square_brackets()
+            .map(|list| {
+                Expr::Array(Recursive::new(list.map(|(element, _semicolon, kw_dyn, size)| {
+                    ArrayElements::Splat {
+                        element,
+                        kw_dyn,
+                        size
+                    }
+                })))
             }),
         Ident::parser().map(Expr::Ident),
         Return::parser().then(expr.or_not()).map(|(tok, ret)| {
@@ -560,21 +580,10 @@ impl AstParse for Block {
                 stmt_expr.map(|(expr, semi)| {
                     Stmt::Expression {
                         expr,
-                        trailing: semi
+                        trailing_semicolon: semi
                     }
                 }),
-                recursive_parser::<Item, _, _>().map_with(|item, extra| {
-                    let span: Span = extra.span();
-                    let state: &mut SimpleState<ParserState<E::Error>> = extra.state();
-
-                    state.produced_errors.push(E::Error::custom(
-                        span,
-                        "unsupported stmt",
-                        "item stmts still unsupported"
-                    ));
-
-                    Stmt::Item(Recursive::new(item))
-                }),
+                recursive_parser::<Item, _, _>().map(|item| Stmt::Item(Recursive::new(item))),
             ));
 
             let padding = Semicolon::parser()
@@ -591,7 +600,7 @@ impl AstParse for Block {
                     if let Some(trailing) = expr {
                         stmts.push(Stmt::Expression {
                             expr: trailing,
-                            trailing: None
+                            trailing_semicolon: None
                         })
                     }
 
@@ -665,7 +674,7 @@ impl AstParse for Type {
 impl AstParse for FunctionSignature {
     fn parser<'src, I: InputTape<'src>, E: ParserData<'src, I>>()
     -> impl OvalParser<'src, I, Self, E> {
-        let arg = parse_group((Ident::parser(), Colon::parser(), Type::parser()));
+        let arg = parse_group((Mut::parser().or_not(), Ident::parser(), Colon::parser(), Type::parser()));
 
         let args = arg
             .separated_by(Comma::parser())
@@ -675,6 +684,7 @@ impl AstParse for FunctionSignature {
 
         let func = parse_group((
             Pub::parser().or_not(),
+            Const::parser().or_not(),
             Extern::parser().or_not(),
             Fn::parser(),
             Ident::parser(),
@@ -683,8 +693,9 @@ impl AstParse for FunctionSignature {
         ));
 
         func.map(
-            |(kw_pub, kw_extern, kw_fn, name, args, ret)| FunctionSignature {
+            |(kw_pub, kw_const, kw_extern, kw_fn, name, args, ret)| FunctionSignature {
                 kw_pub,
+                kw_const,
                 kw_extern,
                 kw_fn,
                 name,
@@ -714,7 +725,7 @@ impl AstParse for Function {
                     let body = vec![
                         Stmt::Expression {
                             expr: Expr::Error(span),
-                            trailing: None
+                            trailing_semicolon: None
                         }
                     ];
 

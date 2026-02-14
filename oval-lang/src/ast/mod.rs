@@ -1,7 +1,8 @@
 use crate::ast::recursive::Recursive;
 use crate::interner::Symbol;
-use crate::spanned::{Span, Spanned, spanned_struct};
+use crate::spanned::{spanned_struct, Span, Spanned};
 use crate::tokens::{Ident, TokenTy};
+use alloc::vec;
 use alloc::vec::Vec;
 use core::hash::Hash;
 
@@ -15,6 +16,7 @@ pub enum Type {
     List(Recursive<TokenTy!['[', Type, ']']>),
     Parens(Recursive<TokenTy!['(', Type, ')']>),
     Tuple(Recursive<TokenTy!['(', Vec<Type>, ')']>),
+    #[expect(clippy::type_complexity)]
     Fn(
         Recursive<(
             TokenTy!["fn"],
@@ -46,7 +48,7 @@ impl Spanned for Type {
 }
 
 #[derive(Debug, Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
-pub enum IntegerType {
+pub enum IntTy {
     Usize,
     U64,
     U32,
@@ -58,6 +60,24 @@ pub enum IntegerType {
     I32,
     I16,
     I8,
+}
+
+impl IntTy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            IntTy::Usize => "usize",
+            IntTy::U64 => "u64",
+            IntTy::U32 => "u32",
+            IntTy::U16 => "u16",
+            IntTy::U8 => "u8",
+
+            IntTy::Isize => "isize",
+            IntTy::I64 => "i64",
+            IntTy::I32 => "i32",
+            IntTy::I16 => "i16",
+            IntTy::I8 => "i8",
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, Hash, Ord, PartialOrd, Eq, PartialEq)]
@@ -73,7 +93,7 @@ pub enum LiteralValue {
     Integer {
         value: u128,
         radix: IntegerRadix,
-        suffix: Option<IntegerType>,
+        suffix: Option<IntTy>,
     },
     Str(Symbol),
     Char(char),
@@ -97,14 +117,59 @@ pub enum BinOpKind {
     Div,
     Rem,
 
+    // Bitwise
+    BitAnd,
+    BitOr,
+    BitXor,
+
+    // Shifts
+    Shl,
+    Shr,
+
     // comparisons
     Lt,
     Le,
     Gt,
     Ge,
+
+    // Logical
+    Or,
+    And,
+
     // equality
     Eq,
     Ne,
+}
+
+impl BinOpKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            BinOpKind::Add => "+",
+            BinOpKind::Sub => "-",
+            BinOpKind::Mul => "*",
+            BinOpKind::Div => "/",
+            BinOpKind::Rem => "%",
+
+            BinOpKind::BitAnd => "&",
+            BinOpKind::BitOr => "|",
+            BinOpKind::BitXor => "^",
+
+
+            BinOpKind::Shl => "<<",
+            BinOpKind::Shr => ">>",
+
+            BinOpKind::Lt => "<",
+            BinOpKind::Le => "<=",
+            BinOpKind::Gt => ">",
+            BinOpKind::Ge => ">=",
+
+            BinOpKind::Or => "||",
+            BinOpKind::And => "&&",
+
+            BinOpKind::Eq => "==",
+            BinOpKind::Ne => "!=",
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -137,8 +202,15 @@ pub struct CallExpr {
 
 #[derive(Debug, Clone)]
 pub struct IndexExpr {
-    pub array: Expr,
+    pub container: Expr,
     pub index: TokenTy!['[', Expr, ']'],
+}
+
+#[derive(Debug, Clone)]
+pub struct AssignExpr {
+    pub location: Expr,
+    pub assign: TokenTy!["="],
+    pub expr: Expr,
 }
 
 #[derive(Debug, Clone)]
@@ -182,10 +254,25 @@ pub struct IfExpr {
 }
 
 #[derive(Debug, Clone)]
+pub enum ArrayElements {
+    Literal(Vec<Expr>),
+    Splat {
+        element: Expr,
+        kw_dyn: Option<TokenTy!["dyn"]>,
+        size: Expr
+    },
+}
+
+impl ArrayElements {
+    pub const EMPTY: Self = ArrayElements::Literal(vec![]);
+}
+
+#[derive(Debug, Clone)]
 pub enum Expr {
     Error(Span),
     Literal(LiteralExpr),
     Ident(Ident),
+    Assign(Recursive<AssignExpr>),
     BinaryOp(Recursive<BinOpExpr>),
     UnaryOp(Recursive<UnOpExpr>),
     CastAs(Recursive<CastAsExpr>),
@@ -193,7 +280,7 @@ pub enum Expr {
     Index(Recursive<IndexExpr>),
     Parens(Recursive<TokenTy!['(', Expr, ')']>),
     Tuple(Recursive<TokenTy!['(', Vec<Expr>, ')']>),
-    Array(Recursive<TokenTy!['[', Vec<Expr>, ']']>),
+    Array(Recursive<TokenTy!['[', ArrayElements, ']']>),
     Return(TokenTy!["return"], Option<Recursive<Expr>>),
     Break(TokenTy!["break"], Option<Recursive<Expr>>),
     Continue(TokenTy!["continue"]),
@@ -209,6 +296,12 @@ impl Spanned for Expr {
             Expr::Literal(lit) => lit.span,
             Expr::Ident(ident) => ident.span,
 
+            Expr::Assign(assign_op) => {
+                assign_op.with_inner(|AssignExpr { location: lhs, assign: _, expr: rhs }| {
+                    Span::merge(lhs.span(), rhs.span())
+                })
+            },
+
             // recursive span finder
             Expr::BinaryOp(binop) => binop
                 .with_inner(|BinOpExpr { lhs, op: _, rhs }| Span::merge(lhs.span(), rhs.span())),
@@ -221,7 +314,7 @@ impl Spanned for Expr {
             Expr::Call(call_expr) => call_expr
                 .with_inner(|CallExpr { callee, args }| Span::merge(callee.span(), args.span())),
             Expr::Index(index_expr) => index_expr
-                .with_inner(|IndexExpr { array, index }| Span::merge(array.span(), index.span())),
+                .with_inner(|IndexExpr { container: array, index }| Span::merge(array.span(), index.span())),
 
             Expr::Return(_, expr) | Expr::Break(_, expr) => {
                 let mut span = match self {
@@ -285,7 +378,7 @@ pub enum Stmt {
     Item(Recursive<Item>),
     Expression {
         expr: Expr,
-        trailing: Option<TokenTy![";"]>,
+        trailing_semicolon: Option<TokenTy![";"]>,
     },
     Let(LetStmt),
 }
@@ -300,10 +393,11 @@ spanned_struct!(stmts in Block);
 #[derive(Debug, Clone)]
 pub struct FunctionSignature {
     pub kw_pub: Option<TokenTy!["pub"]>,
+    pub kw_const: Option<TokenTy!["const"]>,
     pub kw_extern: Option<TokenTy!["extern"]>,
     pub kw_fn: TokenTy!["fn"],
     pub name: Ident,
-    pub args: TokenTy!['(', Vec<(Ident, TokenTy![":"], Type)>, ')'],
+    pub args: TokenTy!['(', Vec<(Option<TokenTy!["mut"]>, Ident, TokenTy![":"], Type)>, ')'],
     pub ret: Option<(TokenTy!["->"], Type)>,
 }
 
@@ -313,6 +407,7 @@ impl Spanned for FunctionSignature {
             .kw_pub
             .as_ref()
             .map(Spanned::span)
+            .or(self.kw_const.as_ref().map(Spanned::span))
             .or(self.kw_extern.as_ref().map(Spanned::span))
             .unwrap_or(self.kw_fn.span());
 

@@ -1,10 +1,17 @@
 //! Oval lang
 
 #![no_std]
+#![forbid(unsafe_op_in_unsafe_fn)]
+
 extern crate alloc;
 
+pub(crate) mod abort;
 pub(crate) mod hashed;
-pub(crate) mod mir;
+pub(crate) mod alloc_helper;
+pub(crate) mod bitset;
+pub(crate) mod arena;
+pub(crate) mod mutex;
+pub(crate) mod gc;
 
 pub mod ast;
 pub mod compile;

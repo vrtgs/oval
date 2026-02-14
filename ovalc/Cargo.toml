@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-oval-lang = { version = "0.0.1", path = "../oval-lang" }
+oval-lang = { version = "0.0.1", path = "../oval-lang", features = ["default"] }
 eyre = "0.6.12"
-ariadne = "0.5.1"
+ariadne = "0.6.0"
+tikv-jemallocator = "0.6.1"

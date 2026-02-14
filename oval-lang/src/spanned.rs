@@ -167,3 +167,4 @@ impl ariadne::Span for Span {
         Span::is_empty(self)
     }
 }
+

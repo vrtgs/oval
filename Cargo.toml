@@ -4,4 +4,4 @@ codegen-units = 512
 
 [workspace]
 resolver = "3"
-members = ["oval-lang", "cow-array", "ovalc"]
+members = ["oval-lang", "ovalc"]

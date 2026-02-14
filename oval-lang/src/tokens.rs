@@ -1,9 +1,9 @@
 use crate::interner::Symbol;
 use crate::parser::static_parser;
 use crate::parser::{AstParse, InputTape, OvalParser, ParserData, ParserState};
-use crate::spanned::{Span, Spanned, spanned_struct};
-use chumsky::Parser;
+use crate::spanned::{spanned_struct, Span, Spanned};
 use chumsky::extra::SimpleState;
+use chumsky::Parser;
 use core::fmt::{Debug, Formatter};
 use core::iter::FusedIterator;
 use core::str::Chars;
@@ -164,7 +164,7 @@ macro_rules! make_tokens {
             Float
         }
 
-        paste::paste! {
+        pastey::paste! {
             #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
             pub enum TokenKind {
                 Ident,
@@ -294,7 +294,7 @@ macro_rules! make_tokens {
                         };
                     }
 
-                    paste::paste! {
+                    pastey::paste! {
                         $(
                         #[expect(non_upper_case_globals)]
                         const [<$plain_name _PATTENRS>]: (char, &str) = {
@@ -621,6 +621,7 @@ make_tokens! {
         Pub = "pub";
         Extern = "extern";
         As = "as";
+        Dyn = "dyn";
     }
 
     Delimiter {
@@ -652,7 +653,7 @@ make_tokens! {
         GreaterThanOrEqual = ">=";
 
         // equality
-        IsEquality = "==";
+        IsEqual = "==";
         IsNotEqual = "!=";
     }
 }

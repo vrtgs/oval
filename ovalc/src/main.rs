@@ -3,15 +3,14 @@ use oval_lang::parser::parse;
 
 mod fmt_ast;
 
+#[cfg(not(miri))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 fn main() -> eyre::Result<()> {
     let mut interner = Interner::new();
-    let source = include_str!("../test-files/function.oval");
+    let source = &*std::fs::read_to_string("./ovalc/test-files/const-eval.oval")?;
     let result = parse(&mut interner, source);
-
-    if core::hint::black_box(false) {
-        // dont warn about dead code
-        let _ = core::hint::black_box(fmt_ast::display_module);
-    }
 
     if result.errors.is_none() {
         println!("{}", fmt_ast::display_module(&result.module, &interner));

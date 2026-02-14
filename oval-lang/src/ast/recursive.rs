@@ -4,7 +4,6 @@ use alloc::boxed::Box;
 use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};
 use core::mem::ManuallyDrop;
-use core::ptr::NonNull;
 
 #[derive(Debug, Clone)]
 #[repr(transparent)]
@@ -18,18 +17,7 @@ impl<T> Recursive<T> {
 }
 
 impl<T: ?Sized> Recursive<T> {
-    pub fn from_box(boxed: Box<T>) -> Self {
-        Self(ManuallyDrop::new(boxed))
-    }
-
-    /// # Safety
-    /// must valid Box::from_raw
-    pub(crate) const unsafe fn from_ptr(raw: NonNull<T>) -> Self {
-        let raw = raw.as_ptr();
-        // Safety: box has the same layout as a raw pointer
-        // this is a const hack since Box::from_raw is not const ready
-        // https://doc.rust-lang.org/std/boxed/index.html#memory-layout
-        let boxed = unsafe { core::mem::transmute::<*mut T, Box<T>>(raw) };
+    pub const fn from_box(boxed: Box<T>) -> Self {
         Self(ManuallyDrop::new(boxed))
     }
 
@@ -61,12 +49,8 @@ impl<T: ?Sized> Recursive<T> {
 
 impl<T> Recursive<[T]> {
     pub const fn empty_slice() -> Self {
-        unsafe {
-            // this slice is zero sized so any sufficiently aligned non-null pointer is a valid object
-            // and is also valid as a box
-            let ptr = NonNull::slice_from_raw_parts(NonNull::dangling(), 0);
-
-            Self::from_ptr(ptr)
+        const {
+            Self::from_box(crate::alloc_helper::empty_slice())
         }
     }
 }
@@ -93,7 +77,6 @@ macro_rules! cmp_trait {
 cmp_trait! {
     impl PartialEq {
         fn eq -> bool;
-        fn ne -> bool;
     }
 
     impl Eq {}

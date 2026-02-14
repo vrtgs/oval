@@ -1,11 +1,7 @@
-use oval_lang::TokenTy;
-use oval_lang::ast::{
-    BinOpExpr, BinOpKind, Block, CallExpr, CastAsExpr, ConstItem, Expr, Function,
-    FunctionSignature, IfBranch, IndexExpr, IntegerRadix, IntegerType, Item, LetStmt, LiteralExpr,
-    LiteralValue, OvalModule, Stmt, Type, UnOpExpr, UnOpKind,
-};
+use oval_lang::ast::{ArrayElements, BinOpExpr, Block, CallExpr, CastAsExpr, ConstItem, Expr, Function, FunctionSignature, IfBranch, IndexExpr, IntTy, IntegerRadix, Item, LetStmt, LiteralExpr, LiteralValue, OvalModule, Stmt, Type, UnOpExpr, UnOpKind};
 use oval_lang::interner::Interner;
 use oval_lang::tokens::Ident;
+use oval_lang::TokenTy;
 use std::fmt::{Debug, Display, Formatter, Write};
 
 #[derive(Copy, Clone)]
@@ -150,16 +146,16 @@ impl FmtAst for LiteralExpr {
 
                 if let Some(suffix) = suffix {
                     let suffix = match suffix {
-                        IntegerType::Usize => "_usize",
-                        IntegerType::U64 => "_u64",
-                        IntegerType::U32 => "_u32",
-                        IntegerType::U16 => "_u16",
-                        IntegerType::U8 => "_u8",
-                        IntegerType::Isize => "_isize",
-                        IntegerType::I64 => "_i64",
-                        IntegerType::I32 => "_i32",
-                        IntegerType::I16 => "_i16",
-                        IntegerType::I8 => "_i8",
+                        IntTy::Usize => "_usize",
+                        IntTy::U64 => "_u64",
+                        IntTy::U32 => "_u32",
+                        IntTy::U16 => "_u16",
+                        IntTy::U8 => "_u8",
+                        IntTy::Isize => "_isize",
+                        IntTy::I64 => "_i64",
+                        IntTy::I32 => "_i32",
+                        IntTy::I16 => "_i16",
+                        IntTy::I8 => "_i8",
                     };
 
                     f.write_str(suffix)?
@@ -181,26 +177,19 @@ impl FmtAst for Expr {
             Expr::Error(_) => f.write_str("<error>"),
             Expr::Literal(lit) => lit.ast_write(data, f),
             Expr::Ident(ident) => f.write_str(data.interner.resolve(ident.symbol())),
+            Expr::Assign(assignment) => assignment.with_inner(move |e| {
+                write!(
+                    f,
+                    "{location} = {expr}",
+                    location = e.location.display(data),
+                    expr = e.expr.display(data)
+                )
+            }),
             Expr::BinaryOp(op) => op.with_inner(move |BinOpExpr { lhs, op, rhs }| {
-                let op = match op.kind {
-                    BinOpKind::Add => "+",
-                    BinOpKind::Sub => "-",
-                    BinOpKind::Mul => "*",
-                    BinOpKind::Div => "/",
-                    BinOpKind::Rem => "%",
-
-                    BinOpKind::Lt => "<",
-                    BinOpKind::Le => "<=",
-                    BinOpKind::Gt => ">",
-                    BinOpKind::Ge => ">=",
-
-                    BinOpKind::Eq => "==",
-                    BinOpKind::Ne => "!=",
-                };
-
                 write!(
                     f,
                     "{lhs} {op} {rhs}",
+                    op = op.kind.as_str(),
                     lhs = lhs.display(data),
                     rhs = rhs.display(data)
                 )
@@ -230,7 +219,7 @@ impl FmtAst for Expr {
                     args = Expr::display_comma_list(&args.0, data)
                 )
             }),
-            Expr::Index(index_expr) => index_expr.with_inner(|IndexExpr { array, index }| {
+            Expr::Index(index_expr) => index_expr.with_inner(|IndexExpr { container: array, index }| {
                 write!(
                     f,
                     "{array}[{index}]",
@@ -248,10 +237,27 @@ impl FmtAst for Expr {
                     write!(f, "({})", Expr::display_comma_list(expressions, data))
                 }
             }),
-            Expr::Array(list) => list.with_inner(|tuple| {
-                let expressions = tuple.0.as_slice();
+            Expr::Array(list) => list.with_inner(|list| {
+                match &list.0 {
+                    ArrayElements::Literal(expressions) => write!(
+                        f,
+                        "[{}]", Expr::display_comma_list(expressions, data)
+                    ),
+                    ArrayElements::Splat {
+                        element,
+                        kw_dyn,
+                        size
+                    } => {
+                        write!(
+                            f,
+                            "[{}; {}{}]",
+                            element.display(data),
+                            if kw_dyn.is_some() { "dyn " } else { "" },
+                            size.display(data)
+                        )
+                    }
+                }
 
-                write!(f, "[{}]", Expr::display_comma_list(expressions, data))
             }),
             Expr::Return(_, expr) | Expr::Break(_, expr) => {
                 let name = match self {
@@ -366,7 +372,7 @@ impl FmtAst for Block {
 
                     f.write_char(';')?
                 }
-                Stmt::Expression { expr, trailing } => {
+                Stmt::Expression { expr, trailing_semicolon: trailing } => {
                     expr.ast_write(data, f)?;
                     if trailing.is_some() {
                         f.write_char(';')?;
@@ -395,24 +401,28 @@ impl FmtAst for FunctionSignature {
         let name = data.interner.resolve(name);
 
         #[allow(non_local_definitions)]
-        impl FmtAst for (Ident, TokenTy![":"], Type) {
+        impl FmtAst for (Option<TokenTy!["mut"]>, Ident, TokenTy![":"], Type) {
             fn ast_write<'a>(
                 &'a self,
                 data: RecurseData<'a>,
                 f: &mut Formatter,
             ) -> std::fmt::Result {
-                let (arg_name, _, ty) = self;
+                let (maybe_mut, arg_name, _, ty) = self;
 
                 write!(
                     f,
-                    "{name}: {ty}",
+                    "{maybe_mut}{name}: {ty}",
+                    maybe_mut = match maybe_mut {
+                        Some(_) => "mut ",
+                        None => ""
+                    },
                     name = data.interner.resolve(arg_name.symbol()),
                     ty = ty.display(data),
                 )
             }
         }
 
-        let args = <(Ident, TokenTy![":"], Type) as FmtAst>::display_comma_list(&self.args.0, data);
+        let args = <(Option<TokenTy!["mut"]>, Ident, TokenTy![":"], Type) as FmtAst>::display_comma_list(&self.args.0, data);
 
         write!(f, "fn {name}({args}) ")?;
         if let Some((_arrow, ret_ty)) = self.ret.as_ref() {
