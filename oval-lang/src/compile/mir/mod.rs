@@ -8,7 +8,7 @@ use crate::compile::{algorithms, hir, CompileError};
 use crate::hashed::{HashMap, HashSet};
 use crate::interner::Interner;
 use crate::spanned::Span;
-use crate::{alloc_helper, recurse};
+use crate::recurse;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::{format, vec};
@@ -124,7 +124,7 @@ make_handle! {
         pub I16 = Ty::Int(IntTy::I16);
         pub I8 = Ty::Int(IntTy::I8);
 
-        pub UNIT = Ty::Tuple(alloc_helper::empty_slice());
+        pub UNIT = Ty::Tuple(slice![]);
     }
 }
 
@@ -245,7 +245,12 @@ impl<'b, 'a, 'err> ScopedMirOrderBuilder<'b, 'a, 'err> {
             });
 
             let add_block_deps = |this: &mut Self, block: BlockId| {
-                let Block { ref stmts, trailing_expr } = ir.blocks[block];
+                let Block {
+                    locals_declared: _,
+                    ref stmts,
+                    trailing_expr
+                } = ir.blocks[block];
+
                 let iter_trailing = match trailing_expr {
                     TrailingExpr::Trailing(expr) => Some(expr),
                     TrailingExpr::FallbackUnit(_) => None
@@ -916,7 +921,7 @@ fn fold_root(
             };
 
             let mut push_block = |block: BlockId| {
-                let Block { ref stmts, trailing_expr } = blocks[block];
+                let Block { locals_declared: _, ref stmts, trailing_expr } = blocks[block];
                 for stmt in stmts {
                     match *stmt {
                         Stmt::Let { local: _, initializer: Some(expr), span: _ }

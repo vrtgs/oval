@@ -1,26 +1,29 @@
+use cfg_if::cfg_if;
 
 #[cfg_attr(feature = "std", inline(always))]
 #[cold]
 pub fn abort() -> ! {
-    #[cfg(not(feature = "std"))]
-    {
-        // Panicking while panicking is defined by Rust to result in an abort.
-        struct Panic;
+    cfg_if! {
+        if #[cfg(feature = "std")] {
+            {
+                extern crate std;
+                std::process::abort()
+            }
+        } else {
+            {
+                // Panicking while panicking is defined by Rust to result in an abort.
+                struct Panic;
 
-        impl Drop for Panic {
-            fn drop(&mut self) {
-                panic!("aborting");
+                impl Drop for Panic {
+                    fn drop(&mut self) {
+                        panic!("aborting");
+                    }
+                }
+
+                let _panic = Panic;
+                panic!("aborting")
             }
         }
-
-        let _panic = Panic;
-        panic!("aborting")
-    }
-
-    #[cfg(feature = "std")]
-    {
-        extern crate std;
-        std::process::abort()
     }
 }
 

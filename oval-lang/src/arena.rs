@@ -649,7 +649,7 @@ impl<T: Debug + Internable> Debug for AnyInterner<T>
     }
 }
 
-pub(crate) fn make_hash<Q, S>(hash_builder: &S, val: &Q) -> u64
+fn make_hash<Q, S>(hash_builder: &S, val: &Q) -> u64
 where
     Q: Hash + ?Sized,
     S: BuildHasher
@@ -658,7 +658,7 @@ where
 }
 
 
-pub(crate) unsafe fn make_hasher<'a, T, S>(
+unsafe fn make_hasher<'a, T, S>(
     hash_builder: &'a S,
     arena: &'a Arena<InternerObj<T>>
 ) -> impl Fn(&T::Handle) -> u64 + 'a

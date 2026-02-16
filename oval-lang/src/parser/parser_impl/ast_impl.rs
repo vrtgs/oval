@@ -7,9 +7,9 @@ use crate::ast::{
     UnOpKind,
 };
 use crate::parser::parser_impl::ext::{
-    recover_nested_delimiters, recover_nested_delimiters_extra, recursive_parser, static_parser,
-    static_unsized_parser, OvalParserExt,
+    recover_nested_delimiters, recover_nested_delimiters_extra, recursive_parser, OvalParserExt,
 };
+use crate::parser::{static_parser, static_unsized_parser};
 use crate::parser::parser_impl::{ParserError, Pattern};
 use crate::parser::{AstParse, InputTape, OvalParser, ParserData, ParserState};
 use crate::spanned::Span;

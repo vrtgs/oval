@@ -11,8 +11,9 @@ use crate::parser::parser_impl::{ParserErrorWrapper, SyntaxError};
 use crate::spanned::Span;
 use crate::tokens::{Tokenizer, TokenizerError};
 pub use parser_impl::ParseErrors;
+
 pub(crate) use parser_impl::{
-    static_parser, AstParse, InputTape, OvalParser, ParserData, ParserState,
+    static_parser, static_unsized_parser, AstParse, InputTape, OvalParser, ParserData, ParserState,
 };
 
 use crate::interner::Interner;

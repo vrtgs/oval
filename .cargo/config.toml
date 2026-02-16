@@ -1,0 +1,5 @@
+# FIXME(new parser) this is only needed since
+#                   the current parser generates some
+#                   insanely long symbol names
+[target.aarch64-apple-darwin]
+linker = "rust-lld"

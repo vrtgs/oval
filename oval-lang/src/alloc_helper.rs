@@ -37,7 +37,7 @@ pub fn splat_slice<T: Copy>(base: T, len: usize) -> Box<[T]> {
 }
 
 macro_rules! slice {
-    [] => { (::alloc::boxed::Box::new([]) as ::alloc::boxed::Box<[_]>) };
+    [] => { $crate::alloc_helper::empty_slice::<_>() };
     // use the alloc::boxed::box_new intrinsic
     [$($item: expr),+ $(,)?] => { vec![$($item),+].into_boxed_slice() };
     [$elem:expr; $n:expr] => { $crate::alloc_helper::splat_slice($elem, $n) };

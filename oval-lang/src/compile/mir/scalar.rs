@@ -201,16 +201,21 @@ macro_rules! impl_bitwise_binop {
     };
 }
 
+
+macro_rules! impl_icmp_inner {
+    ($real_name: ident, $op: tt) => {
+        #[inline(always)]
+        pub const fn $real_name(self, other: Self, int: IntTy) -> bool {
+            let (this, other) = (self.value, other.value);
+            let (s_this, s_other) = (this.cast_signed(), other.cast_signed());
+            int.select_bool(this $op other, s_this $op s_other)
+        }
+    };
+}
+
 macro_rules! impl_icmp {
     ($($name: ident, $op: tt;)+) => {
-        pastey::paste! {$(
-            #[inline(always)]
-            pub const fn [<i$name>](self, other: Self, int: IntTy) -> bool {
-                let (this, other) = (self.value, other.value);
-                let (s_this, s_other) = (this.cast_signed(), other.cast_signed());
-                int.select_bool(this $op other, s_this $op s_other)
-            }
-        )+}
+        pastey::paste! {$( impl_icmp_inner!([<i $name>], $op); )+}
     };
 }
 

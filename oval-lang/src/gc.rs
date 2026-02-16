@@ -26,7 +26,7 @@ cfg_if! {
     }
 }
 
-pub enum Opaque {}
+enum Opaque {}
 
 struct Tracer {
     trace_stack: Vec<NonNull<ObjectFooter>>,
@@ -125,7 +125,7 @@ unsafe impl Send for ObjectFooter {}
 unsafe impl Sync for ObjectFooter {}
 
 #[repr(C)]
-pub struct Object<T = Opaque> {
+struct Object<T = Opaque> {
     obj_data: T,
     footer: ObjectFooter,
 }

@@ -9,7 +9,7 @@ use crate::hashed::HashMap;
 use crate::interner::{Interner, Symbol};
 use crate::spanned::{spanned_struct, Span, Spanned};
 use crate::tokens::Ident;
-use crate::{alloc_helper, ast, hashed, recurse};
+use crate::{ast, hashed, recurse};
 use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -862,7 +862,7 @@ make_handle! {
 
         pub BOOL = Ty::Primitive(PrimTy::Bool);
 
-        pub UNIT = Ty::Tuple(alloc_helper::empty_slice());
+        pub UNIT = Ty::Tuple(slice![]);
     }
 }
 
@@ -1190,6 +1190,7 @@ pub enum TrailingExpr {
 }
 
 pub struct Block {
+    pub locals_declared: Vec<LocalId>,
     pub stmts: Vec<Stmt>,
     pub trailing_expr: TrailingExpr,
 }
@@ -1679,7 +1680,6 @@ impl<'scope, 'builder, 'ast, 'b> ScopedHirBuilder<'scope, 'builder, 'ast, 'b> {
         local_id
     }
 
-
     fn resolve_resource<F: FnOnce(&mut Self, Resource) -> Option<T>, T>(
         &mut self,
         ident: Ident,
@@ -2038,6 +2038,7 @@ impl<'scope, 'builder, 'ast, 'b> ScopedHirBuilder<'scope, 'builder, 'ast, 'b> {
         let span = block.span();
         let block = match block.stmts.0.as_slice() {
             [] => Block {
+                locals_declared: vec![],
                 stmts: vec![],
                 trailing_expr: TrailingExpr::FallbackUnit(self.new_unit(span)),
             },
@@ -2081,7 +2082,6 @@ impl<'scope, 'builder, 'ast, 'b> ScopedHirBuilder<'scope, 'builder, 'ast, 'b> {
                     sub_parser.global_scope = scope_id;
                 }
 
-
                 let capacity = match first_item.is_some() {
                     true => stmts.len() - number_of_items,
                     false => stmts.len()
@@ -2089,6 +2089,12 @@ impl<'scope, 'builder, 'ast, 'b> ScopedHirBuilder<'scope, 'builder, 'ast, 'b> {
 
                 let mut new_stmts = Vec::with_capacity(capacity);
 
+                let number_of_locals = stmts
+                    .iter()
+                    .filter(|stmt| matches!(stmt, ast::Stmt::Let { .. }))
+                    .count();
+
+                let mut locals_declared = Vec::with_capacity(number_of_locals);
                 let mut last_drop_cause = span;
                 for stmt in stmts {
                     last_drop_cause = match stmt {
@@ -2138,6 +2144,8 @@ impl<'scope, 'builder, 'ast, 'b> ScopedHirBuilder<'scope, 'builder, 'ast, 'b> {
                                 }
                             );
 
+                            locals_declared.push(local);
+
                             new_stmts.push(Stmt::Let {
                                 local,
                                 initializer,
@@ -2155,6 +2163,7 @@ impl<'scope, 'builder, 'ast, 'b> ScopedHirBuilder<'scope, 'builder, 'ast, 'b> {
                 };
 
                 Block {
+                    locals_declared,
                     stmts: new_stmts,
                     trailing_expr: trailing,
                 }
@@ -3097,7 +3106,11 @@ impl<'validator, 'hir, 'env> ScopedHirValidator<'validator, 'hir, 'env> {
     }
 
     fn infer_block(&mut self, block_id: BlockId) -> (SpannedTy, ExprId) {
-        let Block { ref stmts, trailing_expr } = self.validator.hir.blocks[block_id];
+        let Block {
+            locals_declared: _,
+            ref stmts,
+            trailing_expr
+        } = self.validator.hir.blocks[block_id];
 
         let mut last_stmt_never = None;
         for stmt in stmts {
@@ -3116,7 +3129,6 @@ impl<'validator, 'hir, 'env> ScopedHirValidator<'validator, 'hir, 'env> {
                             self.validator.coersions.insert(expr, coersion)
                         }
                     }
-
                     self.validator.types.is_never(ty.id).then_some((ty, expr))
                 }
                 Stmt::Let { local, initializer, span } => {

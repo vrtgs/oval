@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use core::cmp::Ordering;
 use core::hash::{Hash, Hasher};
 use core::mem::ManuallyDrop;
+use crate::alloc_helper::slice;
 
 #[derive(Debug, Clone)]
 #[repr(transparent)]
@@ -49,9 +50,7 @@ impl<T: ?Sized> Recursive<T> {
 
 impl<T> Recursive<[T]> {
     pub const fn empty_slice() -> Self {
-        const {
-            Self::from_box(crate::alloc_helper::empty_slice())
-        }
+        const { Self::from_box(slice![]) }
     }
 }
 
@@ -110,7 +109,7 @@ impl<T: ?Sized> Drop for Recursive<T> {
                 impl<T: ?Sized> Drop for DropGuard<'_, T> {
                     fn drop(&mut self) {
                         // this handles the case where the closure is NEVER ran
-                        // so if the closure RAN ran and drop panicked; this is skipped
+                        // so if the closure RAN and drop panicked; this is skipped
                         // and that is intended
                         if let Some(alive) = self.0.take() {
                             unsafe { ManuallyDrop::drop(&mut alive.0) }
